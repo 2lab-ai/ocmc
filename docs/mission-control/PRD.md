@@ -1,139 +1,234 @@
-# Mission Control — Product Requirements Document
+# Mission Control — Product Requirements Document (PRD)
 
-> **bd id:** `clawd-ml1`
-> **Status:** Draft v1.0
-> **Author:** CEO (materialized by agent)
-> **Date:** 2026-02-19
+> **bd id:** `clawd-ml1`  
+> **Status:** Draft v2.1 (SSOT)  
+> **Date:** 2026-02-19  
 > **Related:** [SPEC.md](./SPEC.md) · [DECISIONS.md](./DECISIONS.md)
+
+---
+
+## 0. Executive Summary
+
+Mission Control (MC) is the **CEO-facing operations dashboard + control plane** for the clawd agent fleet.
+
+PRD v2.x adds a non-negotiable operating model:
+
+- **Agent hierarchy:** `CEO (human) → main (root) → pdpm* (project managers) → dev*/qa* (workers)`
+- **Instruction routing / governance:** default chain-of-command must be reflected in the UI and enforced by API guardrails.
+- **CEO direct control defaults to root-only:** CEO can directly control **root = `main`** by default.
+- **CEO override exists:** CEO can “break glass” to directly control any agent/task, but it must be explicit, time-bounded, and audited.
+- **New project intake:** MC must support initiating a new project in a structured way (create project + assign a pdpm + create an initial bd epic/task skeleton).
+
+This PRD is the **single source of truth** for product behavior. SPEC must follow.
+
+Decision anchors:
+- **ADR-015** (hierarchy + routing + break-glass) and **ADR-016** (project intake) in [DECISIONS.md](./DECISIONS.md).
 
 ---
 
 ## 1. Vision
 
-Mission Control (MC) is the **CEO-facing operations dashboard** for the clawd AI agent fleet. It provides real-time visibility into what every agent is doing, what tasks are queued, and what cron jobs are scheduled — all in a single browser tab.
+As the number of AI agents and automated workflows grows, the operator needs a **single pane of glass** to:
 
-The core insight: as the number of AI agents and automated workflows grows, the human operator needs a **single pane of glass** to observe, steer, and audit agent behavior without SSHing into machines or reading raw CLI output.
+1) **Observe** what each agent is doing (tasks + scheduling + health)
+2) **Steer** work safely (assign / reprioritize / unblock)
+3) **Govern** work (encode chain-of-command, prevent accidental misrouting, preserve auditability)
 
----
-
-## 2. Problem Statement
-
-| Pain Point | Current Workaround |
-|---|---|
-| No visibility into agent task queues | Run `bd list` manually in terminal |
-| Can't see which agent is doing what | Grep subagent logs or ask the agent |
-| Cron jobs are invisible | Read cron YAML files, hope for the best |
-| No audit trail for task movements | Trust that agents report correctly |
-| Context-switching between terminal, chat, browser | Accept cognitive overhead |
+MC is not “just a kanban.” It is an **ops cockpit** that encodes organizational structure so we can scale the fleet without chaos.
 
 ---
 
-## 3. Target Users
+## 2. Concepts & Operating Model — P0
 
-1. **CEO / Human Operator** (primary) — Needs at-a-glance situational awareness. Must be able to intervene (reassign, block, prioritize) without touching CLI.
-2. **Agents** (secondary, read-only consumers) — May query their own task state via API during orchestration loops.
+### 2.1 Roles (conceptual)
 
----
+- **CEO (human operator):** sets priorities, can override governance in emergencies.
+- **`main` (root agent):** top-level coordinator; by default, **the only agent the CEO directly controls**.
+- **`pdpm*` (manager agents):** one (or more) manager agents per project; they break down work and dispatch to workers.
+- **`dev*` / `qa*` (worker agents):** implement, test, ship.
 
-## 4. Core Requirements
+> `pdpm*` means there may be multiple pdpm agents concurrently (e.g. `pdpm-mc`, `pdpm-growth`, …). This is required to support parallel projects.
 
-### 4.1 Kanban Board (P0)
+### 2.2 Agent hierarchy (tree/forest)
 
-- Display all `bd` issues as cards organized into swim lanes: **Backlog → Ready → Doing → Blocked → Done** (plus **Waiting Room** for uncategorized).
-- Each card shows: id, title, priority badge, assignee, labels, last-updated timestamp.
-- Cards are **draggable** between lanes — drag triggers a `bd` status update under the hood.
-- Assignee can be changed via card action menu → calls `bd assign`.
+- The fleet forms a **directed forest** with a configured **root agent id** (default `main`).
+- `main` is expected to be the parent of multiple `pdpm*` agents.
+- Each `pdpm*` is expected to parent multiple workers (`dev*`, `qa*`).
 
-### 4.2 Agent Fleet Status (P0)
+MC must be able to **store and render** this hierarchy.
 
-- Show each registered agent as a status tile: name, current state (doing/waiting), currently assigned card.
-- Auto-refresh via WebSocket push — no manual polling from the browser.
+### 2.3 “Direct control” definition
 
-### 4.3 Cron Dashboard (P1)
+Any action that **mutates** state is “direct control”, including:
 
-- Display cron jobs as cards in Scheduled / Disabled lanes.
-- Toggle enable/disable per job.
-- "Run Now" button for manual trigger.
-- Integration target: OpenClaw Gateway RPC (not CLI, because CLI wiring may not exist in all deployments).
+- task assignment / reassignment
+- task lane/status movement
+- agent registration / hierarchy changes
+- cron toggle/run
+- project intake actions (project create/archive)
+- instruction dispatch (if/when implemented)
 
-### 4.4 Authentication (P0)
-
-- Cookie-based session auth with argon2-hashed passwords.
-- Bootstrap admin user from environment variables (`MC_ADMIN_USER`, `MC_ADMIN_PASS`).
-- Login page, logout action. No OAuth/SSO in MVP.
-
-### 4.5 Audit Trail (P1)
-
-- Every user action (task move, task assign, cron toggle, cron run) logged to `audit_events` table.
-- Fields: timestamp, username, action, payload JSON.
-- Queryable via future API endpoint (not in MVP UI).
-
-### 4.6 Real-time Updates (P0)
-
-- WebSocket endpoint (`/ws`) pushes refresh events to all connected clients.
-- Backend poller ticks every N ms (configurable via `MC_POLL_MS`, default 5000), fetches `bd list --json`, and broadcasts diffs.
+Read-only observability is always allowed.
 
 ---
 
-## 5. Non-Requirements (Explicit Exclusions)
+## 3. Instruction Routing Policy (normative) — P0
 
-- **Agent-to-agent communication** — MC is observation + control, not a message bus.
-- **Code deployment** — MC doesn't deploy or build anything.
-- **Multi-tenancy** — Single-operator deployment only.
-- **Mobile-first** — Desktop browser is the target. Mobile is acceptable but not optimized.
+### 3.1 Default routing (encouraged by UX, enforced by API)
 
----
+The default chain-of-command is:
 
-## 6. bd Integration Rules
+- CEO → `main`
+- `main` → `pdpm*`
+- `pdpm*` → its child `dev*`/`qa*`
 
-Mission Control is tightly coupled to `bd` (the task tracker CLI). The following rules govern this integration:
+### 3.2 Prohibited routes (unless CEO override)
 
-1. **bd is the single source of truth** for task state. MC reads from bd and writes back to bd. MC's SQLite stores only users, agents, and audit logs — never task data.
-2. **All task mutations flow through bd CLI** — `bd update`, `bd assign`, `bd label`. MC never writes task state directly to any bd storage.
-3. **bd binary path** is configurable via `MC_BD_BIN` env var (default: `/hostbin/bd`). This allows MC to run in Docker with the host bd binary bind-mounted.
-4. **Polling frequency** is configurable via `MC_POLL_MS`. Default 5000ms. Lower values increase bd CLI call volume.
-5. **bd JSON output** (`bd list --json`) is the contract format. If bd output schema changes, MC's `bd.rs` deserializer must be updated.
+- `main` → `dev*` / `qa*` **direct control** (including “dispatch” style actions and/or task assignment to workers)
 
----
+### 3.3 What “routing policy enforcement” means in MC
 
-## 7. Git Workflow Rules
+MC must implement guardrails such that:
 
-All Mission Control development follows the clawd repository git workflow:
+- If an action is **prohibited**, MC denies it (e.g. HTTP 403) and **audit-logs the denial**.
+- If an action is allowed only under **CEO Override**, MC requires an override session (time-bounded + reason) and **audit-logs the override**.
 
-1. **Single branch**: `master` (the ocmc monorepo main branch). No feature branches for now.
-2. **Commit messages** must include the relevant `bd` issue id (e.g., `clawd-ml1`).
-3. **Push is mandatory** — work is not done until `git push` succeeds (see AGENTS.md "Landing the Plane").
-4. **No production code in docs commits** — documentation changes must be pure docs (this constraint exists for this initial materialization).
-5. **Subagent commits** should be 1–2 meaningful commits, not a trail of micro-fixes.
+> Even when the CEO is the actor (human), MC still defaults to root-only to reduce accidental scope creep. The CEO can always override.
 
 ---
 
-## 8. Decision Logging Requirements
+## 4. UX Requirements — Views, Control Surfaces, and Override — P0
 
-All significant architectural and product decisions related to Mission Control must be recorded in [DECISIONS.md](./DECISIONS.md) using the ADR (Architecture Decision Record) format:
+### 4.1 Default UI mode: Root-only direct control
 
-1. **When to log**: Any choice that (a) has alternatives worth noting, (b) is hard to reverse, or (c) will confuse future readers if unexplained.
-2. **Format**: Sequential numbering, status (Accepted/Superseded/Deprecated), context, decision, consequences.
-3. **Cross-reference**: PRD sections and SPEC sections should reference decision IDs where applicable.
-4. **Who logs**: The agent performing the work. CEO may also add decisions directly.
+The dashboard defaults to **Root-only control**:
+
+- System-wide read-only visibility is allowed.
+- Mutating controls (drag/drop, assign, reparent, cron toggle/run, etc.) are **enabled only** when the target is within the **root control surface** (root=`main`).
+- Targets outside root scope must render read-only controls (disabled state) with an explicit explanation.
+
+### 4.2 View toggle: Root-only vs All (presentation)
+
+The user may switch **view scope**:
+
+- **Root-only view:** focus on root and its immediate surface (reduces noise).
+- **All view:** full fleet view.
+
+This is a *presentation* toggle; it must not bypass guardrails.
+
+### 4.3 CEO Override (“break glass”)
+
+Provide a break-glass UX:
+
+- Toggle: **“CEO Override: enable direct control for all agents/tasks”**
+- When enabling, require a **reason string** (stored in audit events)
+- Override is **time-bounded** (default 10 minutes)
+- Override status must be highly visible while active
 
 ---
 
-## 9. Success Metrics
+## 5. Core Product Requirements
 
-| Metric | Target |
-|---|---|
-| Time from bd update → UI reflects change | < 10 seconds |
-| Page load to interactive | < 2 seconds |
-| Task move (drag) → bd updated | < 3 seconds |
-| Concurrent connected clients | ≥ 5 without degradation |
+### 5.1 Kanban Board (P0)
+
+- Display `bd` issues as cards in lanes: **Backlog → Ready → Doing → Blocked → Done** (+ **Waiting Room**).
+- Each card shows: id, title, priority, assignee, labels, last-updated timestamp.
+- Lane changes and assignments are **policy-gated**.
+
+### 5.2 Agent Fleet Status + Team View (P0)
+
+- Show each registered agent as a status tile:
+  - id / display name
+  - role (`root/main`, `pdpm`, `dev`, `qa`, …)
+  - parent (for hierarchy)
+  - current state (doing/waiting)
+  - currently assigned card (if any)
+- Provide a **hierarchy tree view** to visualize teams: `main` → `pdpm*` → `dev*/qa*`.
+
+### 5.3 Audit trail (P0 for logging, P1 for rich UI)
+
+Audit must include:
+
+- every allowed mutation (task move/assign, cron actions, hierarchy changes, intake actions)
+- every **denied** action (policy violations) with actor + attempted target
+- every override action (`override=true`, `override_reason`, session id)
+
+### 5.4 Authentication (P0)
+
+- Human sessions required for dashboard access.
+- Agent-to-MC authentication is planned for automation/routing endpoints (see SPEC).
+
+### 5.5 Real-time updates (P0)
+
+- WebSocket push-only refresh events
+- Browser fetches the latest snapshot via REST
+
+### 5.6 New Project Intake (P1)
+
+MC must support a structured “start a new project” flow.
+
+**Inputs (minimum):**
+- project name (human-friendly)
+- request/brief (free text)
+- desired priority / urgency
+- optional: choose existing pdpm or “create a new pdpm agent record”
+
+**Outputs:**
+- a `bd` **project epic** (root issue) + initial child skeleton tasks
+- a project record in MC (for grouping/filters)
+- an agent hierarchy update (attach pdpm under `main`; optionally attach team members)
+
+> Intake should not attempt to fully automate “spawning” new agent processes in MVP. It should produce consistent state + tasks so the runtime/orchestrator can act.
+
+### 5.7 Cron dashboard (P1)
+
+- List cron jobs (Scheduled/Disabled)
+- Toggle enable/disable
+- Run-now
+- Integration target: OpenClaw Gateway RPC
 
 ---
 
-## 10. Future Roadmap (Post-MVP)
+## 6. Non-Requirements (Explicit Exclusions)
 
-- **Agent log streaming** — Tail agent subagent logs in MC UI.
-- **Cron Gateway RPC** — Replace stub module with real OpenClaw Gateway WebSocket RPC.
-- **Timeline view** — Gantt-like view of task history.
-- **Notifications** — Push alerts when agents are stuck or tasks are blocked too long.
-- **Multi-user roles** — Read-only viewer vs admin operator.
+- Agent-to-agent chat/messaging bus (MC is governance + ops, not a general chat system)
+- Multi-tenancy
+- Mobile-first UI
+- Public-internet hardening beyond basic hygiene (this is local-first)
+
+---
+
+## 7. Integration Rules
+
+### 7.1 bd integration
+
+1) **bd is SSOT** for tasks. MC reads and writes via bd CLI.
+2) MC’s SQLite persists: users, agents (hierarchy metadata), projects, audit.
+3) bd binary path configurable via `MC_BD_BIN`.
+4) Poll interval configurable via `MC_POLL_MS`.
+
+### 7.2 Control-plane mutations
+
+All state mutations are subject to:
+
+- **authentication** (human session; agent token when applicable)
+- **policy guardrails** (routing rules)
+- **audit logging** (allow/deny/override)
+
+---
+
+## 8. Success Metrics
+
+- bd update → UI reflects change: **< 10s**
+- Page load to interactive: **< 2s**
+- Task move/assign → bd updated: **< 3s**
+- Policy violation detection: **100%** of prohibited routes denied and logged
+- Override safety: **100%** of override mutations include reason + are time-bounded
+
+---
+
+## 9. Roadmap (indicative)
+
+- **P0:** Observability + Kanban + agent registry + hierarchy view + policy gating + audit logging + root-only defaults
+- **P1:** CEO override UX + audit query UI + cron controls + **project intake**
+- **P2:** Instruction dispatch console (if needed) + agent health/stuck detection integration + notifications

@@ -1,15 +1,27 @@
 # Mission Control — Technical Specification
 
-> **bd id:** `clawd-ml1`
-> **Status:** Draft v1.0
-> **Date:** 2026-02-19
+> **bd id:** `clawd-ml1`  
+> **Status:** Draft v2.0  
+> **Date:** 2026-02-19  
 > **Related:** [PRD.md](./PRD.md) · [DECISIONS.md](./DECISIONS.md)
 
 ---
 
 ## 1. System Overview
 
-Mission Control is a **Rust (axum) web application** that serves a real-time operations dashboard. It polls external data sources (primarily `bd` CLI), caches snapshots in memory, persists user/agent/audit data in SQLite, and pushes updates to connected browser clients via WebSocket.
+Mission Control (MC) is a **Rust (axum) web application** that serves a local-first operations dashboard and control plane.
+
+It integrates with:
+
+- **bd CLI** (tasks are SSOT)
+- **SQLite** (users, agent hierarchy metadata, audit)
+- **Gateway RPC** (cron; may start as stub)
+
+PRD v2 introduces an explicit **agent hierarchy and routing policy** (`CEO → main → pdpm → dev`) that MC must encode as:
+
+- **UI gating** (root-only direct control by default)
+- **API guardrails** (deny policy-violating mutations + audit)
+- **CEO override** (break-glass mode; explicit + auditable)
 
 ```
 ┌──────────────┐     HTTP/WS      ┌──────────────┐
@@ -23,14 +35,16 @@ Mission Control is a **Rust (axum) web application** that serves a real-time ope
                     │  bd CLI    │  │  SQLite    │  │ Gateway │
                     │ (issues)   │  │ (users,    │  │ RPC     │
                     │            │  │  agents,   │  │ (cron)  │
-                    │            │  │  audit)    │  │ [stub]  │
+                    │            │  │  audit)    │  │         │
                     └───────────┘  └───────────┘  └─────────┘
 ```
 
 ### Decision References
-- **ADR-001**: Rust + axum chosen over Node/Python — see [DECISIONS.md](./DECISIONS.md#adr-001).
-- **ADR-002**: bd CLI integration via subprocess — see [DECISIONS.md](./DECISIONS.md#adr-002).
-- **ADR-003**: Cookie auth over JWT — see [DECISIONS.md](./DECISIONS.md#adr-003).
+
+- **ADR-001**: Rust + axum — [DECISIONS.md](./DECISIONS.md#adr-001)
+- **ADR-002**: bd integration via subprocess — [DECISIONS.md](./DECISIONS.md#adr-002)
+- **ADR-003**: Cookie-based auth direction — [DECISIONS.md](./DECISIONS.md#adr-003)
+- **ADR-015**: Agent hierarchy + routing guardrails — [DECISIONS.md](./DECISIONS.md#adr-015)
 
 ---
 
@@ -38,13 +52,14 @@ Mission Control is a **Rust (axum) web application** that serves a real-time ope
 
 | Layer | Choice | Notes |
 |---|---|---|
-| Language | Rust (edition 2024) | Performance, safety, single binary |
-| Web framework | axum 0.7 | WebSocket + REST, tower middleware |
-| Database | SQLite via sqlx 0.8 | Embedded, zero-ops, sufficient for single-operator |
-| Auth | argon2 password hashing | Cookie-based sessions (`mc_session`) |
-| Real-time | WebSocket (native axum) | Push-only from server to client |
-| Frontend | Vanilla JS + static HTML/CSS | No build step, served via `tower-http::ServeDir` |
-| Task tracker | bd CLI (subprocess) | JSON output parsed into `TaskCard` structs |
+| Language | Rust (edition 2024) | Single binary, async runtime |
+| Web framework | axum 0.7 | REST + WebSocket |
+| DB | SQLite via sqlx 0.8 | Embedded persistence |
+| Auth (human) | Cookie session | Signed token cookie (HttpOnly, SameSite=Lax) |
+| Auth (agent) | Token header (planned) | For automation/routing endpoints |
+| Frontend | Vanilla JS + static HTML/CSS | No build step |
+| Task SSOT | bd CLI (subprocess) | `bd list --json` contract |
+| Cron | Gateway WS RPC | May be stubbed until protocol is stable |
 
 ---
 
@@ -52,46 +67,95 @@ Mission Control is a **Rust (axum) web application** that serves a real-time ope
 
 ### 3.1 SQLite Schema (persisted)
 
+#### Users
+
 ```sql
 CREATE TABLE users (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   username      TEXT NOT NULL UNIQUE,
-  pass_hash     TEXT NOT NULL,          -- argon2 hash
-  created_at    TEXT NOT NULL            -- ISO 8601
-);
-
-CREATE TABLE agents (
-  id            TEXT PRIMARY KEY,        -- e.g. "opus46", "sonnet-a"
-  display_name  TEXT NOT NULL,
+  pass_hash     TEXT NOT NULL,
   created_at    TEXT NOT NULL
-);
-
-CREATE TABLE audit_events (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  at            TEXT NOT NULL,           -- ISO 8601
-  username      TEXT NOT NULL,           -- who performed the action
-  action        TEXT NOT NULL,           -- e.g. "task.move", "cron.toggle"
-  payload_json  TEXT NOT NULL            -- action-specific details
 );
 ```
 
-### 3.2 In-Memory Cache (`CacheState`)
+#### Agents (hierarchy-aware)
+
+Agents are registered with **role** and **hierarchy relationships**.
+
+```sql
+CREATE TABLE agents (
+  id            TEXT PRIMARY KEY,            -- e.g. "main", "pdpm", "opus46"
+  display_name  TEXT NOT NULL,
+  role          TEXT NOT NULL,               -- enum-like: root|pdpm|dev|qa|observer
+  parent_id     TEXT NULL REFERENCES agents(id),
+  created_at    TEXT NOT NULL
+);
+
+CREATE INDEX idx_agents_parent_id ON agents(parent_id);
+```
+
+Notes:
+- `role` + `parent_id` encode the tree: `main (root)` → `pdpm` → `dev*`.
+- `parent_id` is NULL for the root agent.
+
+#### Audit Events (actor + override-aware)
+
+To support routing policy, audit must record *who* attempted an action, *what* was attempted, and whether it was an override or a denial.
+
+```sql
+CREATE TABLE audit_events (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  at              TEXT NOT NULL,
+  actor_kind      TEXT NOT NULL,             -- user|agent
+  actor_id        TEXT NOT NULL,             -- username OR agent_id
+  action          TEXT NOT NULL,             -- e.g. task.assign, policy.deny, cron.toggle
+  payload_json    TEXT NOT NULL,
+  override        INTEGER NOT NULL DEFAULT 0,
+  override_reason TEXT NULL
+);
+
+CREATE INDEX idx_audit_at ON audit_events(at);
+CREATE INDEX idx_audit_actor ON audit_events(actor_kind, actor_id);
+```
+
+> If the current implementation still uses `username`-only audit rows, migrations should extend the schema and keep backward compatibility by writing `actor_kind="user"` and `actor_id=username`.
+
+#### Agent auth (planned)
+
+For agent-to-MC calls (automation endpoints), MC should support per-agent tokens.
+
+Minimal approach:
+
+```sql
+CREATE TABLE agent_tokens (
+  agent_id     TEXT PRIMARY KEY REFERENCES agents(id),
+  token_hash   TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  last_used_at TEXT NULL
+);
+```
+
+### 3.2 In-Memory Cache
 
 ```rust
 pub struct CacheState {
     pub last_snapshot_at: Option<DateTime<Utc>>,
     pub snapshot: Option<KanbanSnapshot>,
 }
-```
 
-The `KanbanSnapshot` is rebuilt every poll tick and broadcast to WebSocket clients:
-
-```rust
 pub struct KanbanSnapshot {
     pub generated_at: DateTime<Utc>,
     pub agents: Vec<Agent>,
     pub tasks: Vec<TaskCard>,
     pub cron: Vec<CronCard>,
+    pub ui_policy: UiPolicy,   // new in v2
+}
+
+pub struct UiPolicy {
+    pub root_agent_id: String,         // default: "main"
+    pub default_control_mode: String,  // root_only
+    pub can_override: bool,
+    pub override_ttl_s: u64,
 }
 ```
 
@@ -100,36 +164,68 @@ pub struct KanbanSnapshot {
 | Type | Source | Key Fields |
 |---|---|---|
 | `TaskCard` | `bd list --json` | id, title, priority, status, labels, assignee, lane, updated_at |
-| `Agent` | SQLite `agents` table + derived state | id, display_name, state (doing/waiting), current_card_id |
-| `CronCard` | Gateway RPC (stub) | id, name, enabled, schedule, next_run_at_ms, lane |
+| `Agent` | SQLite `agents` + derived state | id, display_name, role, parent_id, state, current_card_id |
+| `CronCard` | Gateway RPC | id, name, enabled, schedule, next_run_at_ms |
 
-**Lane mapping** for tasks: `Backlog`, `Ready`, `Doing`, `Blocked`, `Done`, `Waiting Room`. The lane is derived from bd issue status field with a mapping function in `bd.rs`.
+Lane mapping for unknown/uncategorized tasks must fall back to **Waiting Room** (PRD v2 + ADR-009).
 
 ---
 
 ## 4. API Surface
 
-### 4.1 REST Endpoints
+### 4.1 Actor identity
 
-| Method | Path | Auth | Description |
+MC differentiates:
+
+- **Human users**: authenticated via session cookie
+- **Agents** (planned): authenticated via header token
+
+Request context should produce an `Actor`:
+
+```rust
+enum ActorKind { User, Agent }
+struct Actor { kind: ActorKind, id: String }
+```
+
+### 4.2 Guardrails (routing policy enforcement)
+
+For every mutating endpoint, MC must run:
+
+- `policy::authorize(actor, action, target)`
+- If denied: respond `403` (or `409`) and write `audit_events(action="policy.deny", payload=...)`
+- If allowed with CEO override: write `audit_events(override=1, override_reason=...)`
+
+Policy rules (PRD v2):
+- `main` cannot directly control/dispatch to `dev*` targets.
+- `pdpm` can control/dispatch to its `dev*` children.
+- CEO can override (explicit flag + reason).
+
+### 4.3 REST Endpoints
+
+| Method | Path | Auth | Notes |
 |---|---|---|---|
-| GET | `/healthz` | No | Health check, returns `"ok"` |
-| GET | `/login` | No | Login page (HTML) |
-| POST | `/login` | No | Authenticate, set `mc_session` cookie |
-| POST | `/logout` | Yes | Clear session cookie |
-| GET | `/api/kanban` | Yes | Return current `KanbanSnapshot` JSON |
-| POST | `/api/task/:id/move` | Yes | Move task to new lane (`{lane: "Doing"}`) |
-| POST | `/api/task/:id/assign` | Yes | Assign task to agent (`{agent: "opus46"}`) |
-| POST | `/api/cron/:id/toggle` | Yes | Toggle cron job enabled/disabled |
-| POST | `/api/cron/:id/run` | Yes | Trigger immediate cron job execution |
+| GET | `/healthz` | No | returns `ok` |
+| GET/POST | `/login` | No | session cookie |
+| POST | `/logout` | Yes | clear cookie |
+| GET | `/api/kanban` | Yes | returns `KanbanSnapshot` (incl. `ui_policy`) |
+| GET | `/api/agents` | Yes | list agents + roles + parent_id |
+| POST | `/api/agents` | Yes | create/update agent record (guarded + audited) |
+| POST | `/api/agents/:id/reparent` | Yes | hierarchy change (guarded + audited) |
+| POST | `/api/task/:id/move` | Yes | guarded by policy + UI mode |
+| POST | `/api/task/:id/assign` | Yes | guarded by policy + UI mode |
+| GET | `/api/audit` | Yes | query audit events (filters by actor/action/time) |
+| POST | `/api/cron/:id/toggle` | Yes | guarded + audited |
+| POST | `/api/cron/:id/run` | Yes | guarded + audited |
 
-### 4.2 WebSocket
+> Future (optional): `/api/dispatch` for instruction routing (Actor=Agent supported). If/when added, it must be guarded by the same policy engine.
 
-| Path | Direction | Payload |
-|---|---|---|
-| `/ws` | Server → Client | `{"type":"refresh","at":"...","reason":"poll"}` |
+### 4.4 WebSocket
 
-The WebSocket is **push-only**. The server broadcasts a refresh event after each successful poller tick. The client, upon receiving this event, calls `GET /api/kanban` to fetch the latest snapshot.
+Push-only refresh notifications:
+
+- `/ws`: server → client `{"type":"refresh","at":"...","reason":"poll"}`
+
+Client re-fetches `/api/kanban` on refresh.
 
 ---
 
@@ -137,132 +233,71 @@ The WebSocket is **push-only**. The server broadcasts a refresh event after each
 
 ```
 src/
-├── main.rs              # Server bootstrap, router, poller spawn
+├── main.rs
 └── mc/
-    ├── mod.rs           # Config, domain types, enums
-    ├── auth.rs          # AuthedUser extractor (cookie-based)
-    ├── auth_http.rs     # Login/logout HTTP handlers
-    ├── bd.rs            # bd CLI subprocess integration
-    ├── cron.rs          # Cron job integration (stub for Gateway RPC)
-    ├── db.rs            # SQLite migrations, queries, admin bootstrap
-    ├── handlers.rs      # REST API handlers (kanban, task, cron)
-    ├── poller.rs        # Background poll loop (bd + cron → cache)
-    └── ws.rs            # WebSocket handler (broadcast events)
-```
-
-### 5.1 Key Flows
-
-#### Poll Tick (every MC_POLL_MS)
-```
-poller::tick()
-  → bd::list_issues(cfg)       # spawns `bd list --json`, parses output
-  → cron::list_jobs(cfg)       # stub, returns empty vec
-  → db::list_agents(pool)      # SELECT from agents table
-  → derives Agent states from current task assignments
-  → builds KanbanSnapshot
-  → writes to CacheState (RwLock)
-  → events_tx.send(Refresh)    # broadcast channel → all WS clients
-```
-
-#### Task Move (user drags card)
-```
-Browser: POST /api/task/:id/move {lane: "Doing"}
-  → handlers::task_move_post()
-  → auth: extract AuthedUser from cookie
-  → bd::set_lane(cfg, id, lane)   # spawns `bd update <id> --status <lane>`
-  → db::audit(pool, user, "task.move", payload)
-  → next poll tick picks up the change
+    ├── mod.rs
+    ├── auth.rs            # human auth (cookie)
+    ├── agent_auth.rs      # (planned) agent token auth
+    ├── policy.rs          # routing policy engine + guardrails
+    ├── auth_http.rs
+    ├── bd.rs
+    ├── cron.rs
+    ├── db.rs
+    ├── handlers.rs
+    ├── poller.rs
+    └── ws.rs
 ```
 
 ---
 
-## 6. Configuration
+## 6. Key Flows
 
-All configuration is via environment variables (see **ADR-001** for rationale):
+### 6.1 Poll tick
+
+Same as v1: bd list + cron list + agents list → build snapshot → broadcast refresh.
+
+### 6.2 Mutations with policy enforcement
+
+Example: task assignment
+
+1) Browser calls `POST /api/task/:id/assign {agent:"opus46", override:false}`
+2) Server extracts `Actor` (user/agent)
+3) Server calls `policy::authorize(actor, Action::TaskAssign, target_agent)`
+4) If denied:
+   - return 403
+   - audit `policy.deny`
+5) If allowed:
+   - call `bd assign`
+   - audit `task.assign` (and override fields if override)
+
+---
+
+## 7. Configuration
 
 | Env Var | Default | Description |
 |---|---|---|
-| `MC_SQLITE_URL` | `sqlite:///data/mc.db` | SQLite connection string |
-| `MC_BIND_HOST` | `0.0.0.0` | Listen address |
-| `MC_BIND_PORT` | `3000` | Listen port |
-| `MC_POLL_MS` | `5000` | Poller interval in milliseconds |
-| `MC_BD_BIN` | `/hostbin/bd` | Path to bd CLI binary |
-| `MC_GATEWAY_URL` | `ws://127.0.0.1:18789` | OpenClaw Gateway WebSocket URL |
-| `MC_GATEWAY_TOKEN` | (none) | Gateway auth token |
-| `MC_GATEWAY_PASSWORD` | (none) | Gateway auth password |
-| `MC_ADMIN_USER` | `admin` | Bootstrap admin username |
-| `MC_ADMIN_PASS` | `change-me` | Bootstrap admin password |
+| `MC_SQLITE_URL` | `sqlite:///data/mc.db` | DB path |
+| `MC_BIND_HOST` | `0.0.0.0` | bind host |
+| `MC_BIND_PORT` | `3000` | bind port |
+| `MC_POLL_MS` | `5000` | poll interval |
+| `MC_BD_BIN` | `/hostbin/bd` | bd binary |
+| `MC_ROOT_AGENT_ID` | `main` | root of hierarchy |
+| `MC_OVERRIDE_TTL_S` | `600` | override validity window |
+| `MC_GATEWAY_URL` | `ws://127.0.0.1:18789` | gateway ws |
+| `MC_ADMIN_USER` | `admin` | bootstrap user |
+| `MC_ADMIN_PASS` | (required) | bootstrap password |
 
 ---
 
-## 7. bd Integration Detail
+## 8. Frontend Architecture (v2 additions)
 
-### 7.1 Read Path
+In addition to v1 rendering:
 
-```rust
-// bd.rs — simplified
-pub async fn list_issues(cfg: &McConfig) -> Result<Vec<TaskCard>> {
-    let out = Command::new(&cfg.bd_bin)
-        .args(["list", "--json", "--limit", "0"])
-        .output().await?;
-    let issues: Vec<BdIssue> = serde_json::from_slice(&out.stdout)?;
-    Ok(issues.into_iter().map(to_task_card).collect())
-}
-```
-
-The `BdIssue` struct maps the bd JSON output:
-```rust
-struct BdIssue {
-    id: String,
-    title: String,
-    priority: Option<String>,
-    status: String,
-    labels: Vec<String>,
-    assignee: Option<String>,
-    updated_at: Option<DateTime<Utc>>,
-}
-```
-
-### 7.2 Write Path
-
-Task mutations call bd CLI subcommands:
-- **Move**: `bd update <id> --status <lane>`
-- **Assign**: `bd assign <id> <agent>`
-- **Label**: `bd label add <id> <label>`
-
-All writes are fire-and-forget from the API handler perspective — the next poll tick will pick up the change and push it to clients.
-
-### 7.3 Contract
-
-MC depends on `bd list --json` returning a JSON array of objects with the fields defined in `BdIssue`. **If bd output schema changes, `bd.rs` must be updated.** This is a hard coupling by design (see PRD §6).
-
----
-
-## 8. Frontend Architecture
-
-The frontend is intentionally minimal — vanilla JS, no framework, no build step.
-
-```
-static/
-├── index.html       # Shell: header, agent tiles, kanban lanes, cron section
-├── app.css          # Layout: flexbox kanban, agent tiles, card styles
-└── app.js           # Fetch API, WebSocket client, DOM rendering
-```
-
-### 8.1 Rendering Flow
-
-1. On page load, `app.js` calls `GET /api/kanban` and renders the snapshot.
-2. A WebSocket connection is opened to `/ws`.
-3. On each `refresh` event, `app.js` re-fetches `/api/kanban` and re-renders.
-4. Drag-and-drop on cards triggers `POST /api/task/:id/move`.
-
-### 8.2 Kanban Lanes
-
-```javascript
-const lanes = ["Backlog", "Ready", "Doing", "Blocked", "Done", "Waiting Room"];
-```
-
-Tasks are bucketed into lanes based on their `lane` field. Unknown lane values fall back to `Ready`.
+- Render **agent hierarchy tree** (role + parent relationships)
+- Add UI toggles:
+  - **View**: root-only vs all
+  - **Control**: CEO override (requires reason; time-bounded)
+- Render disabled controls with explanatory tooltip when guardrails apply
 
 ---
 
@@ -270,47 +305,25 @@ Tasks are bucketed into lanes based on their `lane` field. Unknown lane values f
 
 | Area | Approach |
 |---|---|
-| Password storage | argon2 with random salt per user |
-| Session management | `mc_session=<username>` cookie, HttpOnly, SameSite=Lax |
-| Auth enforcement | `AuthedUser` axum extractor on all `/api/*` routes |
-| bd CLI execution | Subprocess with no shell interpolation (args passed as array) |
-| CSRF | SameSite=Lax cookie provides basic protection; POST-only mutations |
-| Network | Designed for LAN/VPN deployment, not public internet (see PRD §5) |
+| Human sessions | Signed cookie token, HttpOnly, SameSite=Lax |
+| Agent calls (planned) | Per-agent token header (hash stored in SQLite) |
+| Guardrails | Central policy engine; deny + audit violations |
+| bd subprocess | Arg-array exec, no shell |
 
-**Known limitations** (MVP):
-- Session cookie stores username in plaintext (no signed token). Acceptable for single-operator LAN deployment.
-- No rate limiting on login attempts.
-- No HTTPS termination (expected to be behind reverse proxy).
+Known limitations (until implemented):
+- Without agent tokens, agent-to-MC automation endpoints must be disabled or admin-only.
 
 ---
 
 ## 10. Deployment
 
-MC is designed to run as a Docker container or bare-metal binary:
-
-```bash
-# Bare metal
-MC_ADMIN_PASS=hunter2 MC_BD_BIN=/usr/local/bin/bd cargo run
-
-# Docker (bd binary bind-mounted from host)
-docker run -d \
-  -v /usr/local/bin/bd:/hostbin/bd:ro \
-  -v mc-data:/data \
-  -e MC_ADMIN_PASS=hunter2 \
-  -p 3000:3000 \
-  mission-control:latest
-```
-
-SQLite database is stored at the path specified by `MC_SQLITE_URL`. Migrations run automatically on startup.
+v1 Docker strategy remains valid (bind-mount bd + .beads; volume for SQLite).
 
 ---
 
-## 11. Testing Strategy (Planned)
+## 11. Testing Strategy
 
-| Level | Approach |
-|---|---|
-| Unit | Rust `#[cfg(test)]` modules for bd parsing, lane mapping |
-| Integration | Test against a mock bd binary that returns fixture JSON |
-| E2E | Playwright or similar for login → kanban render → drag card flow |
-
-**Current state**: No tests exist yet. This is tracked as a follow-up task.
+Add coverage for:
+- policy engine (authorize matrix)
+- audit logging on allow/deny/override
+- UI: root-only vs override behavior (E2E)
