@@ -252,8 +252,10 @@ Tasks explicitly labeled `mc/ready` or with a clear ready-equivalent status reta
 ## ADR-010: Session tokens over plaintext username cookies {#adr-010}
 
 **Date:** 2026-02-19
-**Status:** Accepted
+**Status:** Superseded by ADR-014
 **Decided by:** Agent (auto-decision during task decomposition, mc-b1j.10)
+
+> Note: the shipped implementation chose stateless HMAC-signed tokens; ADR-014 is the authoritative decision record.
 
 ### Context
 
@@ -362,6 +364,81 @@ Considered approaches:
 - **Positive:** `.beads/` is read-only in container, preventing accidental writes.
 - **Negative:** Host must have a linux/amd64 static bd binary. Won't work on ARM hosts without a compatible binary.
 - **Negative:** Dependency caching in Docker is approximate (skeleton project trick); full recompile on any Cargo.toml change.
+
+---
+
+## ADR-014: Stateless HMAC-signed session cookies (ship-ready local-first auth) {#adr-014}
+
+**Date:** 2026-02-19
+**Status:** Accepted
+
+### Context
+
+ADR-003 established cookie-based auth. ADR-010 originally proposed DB-backed UUID sessions to prevent cookie forgery, but the implementation path chosen for Mission Control is **stateless signed tokens**.
+
+We want:
+- Protection against trivial cookie forgery (`mc_session=<username>`) on a LAN
+- Minimal operational complexity (no session table + no per-request DB lookup)
+- Clear failure modes (tamper/expiry detection)
+
+### Decision
+
+Use **HMAC-SHA256 signed session tokens** stored in the `mc_session` cookie.
+
+Token format:
+- `base64url(payload_json) + "." + hex(hmac_sha256(payload_json, MC_SESSION_SECRET))`
+
+Where payload contains:
+- `u`: username
+- `iat`: issued-at
+- `exp`: expiry (default 24h)
+
+### Consequences
+
+- **Positive:** No DB round-trip per request; easy to run in Docker/bare metal.
+- **Positive:** Tampering and forgery are detected (requires secret).
+- **Negative:** Server-side revocation is limited (unless we later add a denylist or session table).
+
+---
+
+## ADR-015: Agent hierarchy + routing guardrails (CEO → main → pdpm → dev) {#adr-015}
+
+**Date:** 2026-02-19
+**Status:** Accepted
+
+### Context
+
+As we scale the agent fleet, “anyone can control anything” leads to:
+- Accidental task misrouting (e.g., `main` directly dispatching a `dev`)
+- Unclear accountability (who instructed whom?)
+- Increased operator cognitive load (too many direct-control surfaces)
+
+We need Mission Control to reflect the org operating model:
+
+- **Hierarchy:** `CEO → main → pdpm → dev`
+- **Policy:** `main` must not directly instruct/control `dev` (route via `pdpm`)
+- **Safety valve:** CEO can override in emergencies, but it must be explicit and auditable
+
+Alternatives considered:
+1. **Social policy only** (document it; no enforcement) — too easy to violate accidentally.
+2. **Enforce only in the main agent prompt** — bypassable by UI/API calls; lacks central audit.
+3. **Hard-disable all non-root control** — too rigid; CEO needs a break-glass option.
+
+### Decision
+
+1) Encode **agent hierarchy metadata** in MC (agents have `role` and `parent_id`).
+2) Add a central **policy engine** for all mutating endpoints:
+   - deny policy-violating actions and **audit** denials
+   - allow CEO override only with explicit `override=true` + `override_reason`
+3) UI defaults to **root-only direct control** (focus on `main`), with:
+   - **view toggle** (root-only vs all)
+   - **control override** (break-glass, time-bounded)
+
+### Consequences
+
+- **Positive:** Prevents accidental misrouting; makes chain-of-command the default.
+- **Positive:** Audit trail captures both violations and overrides.
+- **Negative:** Adds UX and implementation complexity (policy matrix + override flows).
 
 ---
 
