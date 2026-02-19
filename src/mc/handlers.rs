@@ -360,6 +360,20 @@ pub async fn override_enable_post(
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/override/status
+// ---------------------------------------------------------------------------
+
+pub async fn override_status_get(
+    user: AuthedUser,
+    State(state): State<AppState>,
+) -> Result<Json<mc::db::OverrideStatus>, (StatusCode, String)> {
+    let status = mc::db::get_override_status(&state.pool, &user.0)
+        .await
+        .map_err(internal)?;
+    Ok(Json(status))
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/override/disable
 // ---------------------------------------------------------------------------
 
@@ -386,6 +400,97 @@ pub async fn override_disable_post(
     .map_err(internal)?;
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/policy/check — pre-flight gating
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct PolicyCheckReq {
+    pub action: String,
+    pub target_agent: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PolicyCheckResp {
+    pub allowed: bool,
+    pub reason: Option<String>,
+    pub needs_override: bool,
+}
+
+pub async fn policy_check_post(
+    user: AuthedUser,
+    State(state): State<AppState>,
+    Json(req): Json<PolicyCheckReq>,
+) -> Result<Json<PolicyCheckResp>, (StatusCode, String)> {
+    let policy_cfg = state.cfg.policy_config();
+    let actor = Actor {
+        kind: ActorKind::User,
+        id: user.0.clone(),
+    };
+
+    let action = match req.action.as_str() {
+        "task.assign" => Action::TaskAssign,
+        "task.move" => Action::TaskMove,
+        "agent.create" => Action::AgentCreate,
+        "agent.delete" => Action::AgentDelete,
+        "agent.reparent" => Action::AgentReparent,
+        "cron.toggle" => Action::CronToggle,
+        "cron.run" => Action::CronRun,
+        _ => {
+            return Ok(Json(PolicyCheckResp {
+                allowed: true,
+                reason: None,
+                needs_override: false,
+            }));
+        }
+    };
+
+    let target_rec = if let Some(ref tid) = req.target_agent {
+        policy::load_agent(&state.pool, tid).await.map_err(internal)?
+    } else {
+        None
+    };
+
+    // Check without override first
+    let decision_without = policy::authorize(
+        &actor,
+        &action,
+        req.target_agent.as_deref(),
+        None,
+        target_rec.as_ref(),
+        false,
+        &OverrideCtx::default(),
+        &policy_cfg,
+    );
+
+    if decision_without.is_allowed() {
+        return Ok(Json(PolicyCheckResp {
+            allowed: true,
+            reason: None,
+            needs_override: false,
+        }));
+    }
+
+    // Denied without override — check if user has active override
+    let has_override = policy::has_active_override(&state.pool, &user.0)
+        .await
+        .map_err(internal)?;
+
+    if has_override {
+        return Ok(Json(PolicyCheckResp {
+            allowed: true,
+            reason: None,
+            needs_override: false,
+        }));
+    }
+
+    Ok(Json(PolicyCheckResp {
+        allowed: false,
+        reason: decision_without.deny_reason().map(|s| s.to_string()),
+        needs_override: true,
+    }))
 }
 
 // ---------------------------------------------------------------------------

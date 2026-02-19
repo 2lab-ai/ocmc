@@ -10,10 +10,60 @@
   <header>
     <h1>Mission Control</h1>
     <div class="header-right">
+      <div id="overrideBanner" class="override-banner hidden"></div>
       <form id="logoutForm" method="post" action="/logout"><button>Logout</button></form>
       <span id="status">—</span>
     </div>
   </header>
+
+  <!-- Override Modal -->
+  <div id="overrideModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>🔓 CEO Override (Break Glass)</h3>
+        <button class="modal-close" id="overrideModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">
+          Enable CEO direct control override to bypass the root-agent-only policy.
+          All actions will be audit-logged. Override expires after the TTL.
+        </p>
+        <label class="form-label">Reason <span class="required">*</span></label>
+        <textarea id="overrideReason" class="form-input" rows="3" placeholder="Emergency hotfix, incident response, etc."></textarea>
+        <label class="form-label">TTL (seconds)</label>
+        <div class="ttl-presets">
+          <button class="ttl-btn" data-ttl="300">5m</button>
+          <button class="ttl-btn active" data-ttl="600">10m</button>
+          <button class="ttl-btn" data-ttl="1800">30m</button>
+          <button class="ttl-btn" data-ttl="3600">1h</button>
+        </div>
+        <input id="overrideTtl" type="number" class="form-input" value="600" min="60" max="86400" />
+        <div id="overrideError" class="form-error hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="overrideCancel" class="btn-secondary">Cancel</button>
+        <button id="overrideSubmit" class="btn-danger">Enable Override</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Policy Denied Modal -->
+  <div id="policyDeniedModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>🚫 Action Denied by Policy</h3>
+        <button class="modal-close" id="policyDeniedClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="policyDeniedReason" class="denied-reason"></p>
+        <p class="denied-hint">You need a CEO override to perform this action on non-root agents.</p>
+      </div>
+      <div class="modal-footer">
+        <button id="policyDeniedDismiss" class="btn-secondary">Dismiss</button>
+        <button id="policyDeniedOverride" class="btn-danger">🔓 Enable Override</button>
+      </div>
+    </div>
+  </div>
 
   <main>
     <section>

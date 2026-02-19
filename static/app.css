@@ -1,23 +1,84 @@
+/* ==========================================================================
+   Mission Control — app.css
+   CEO override (break-glass) + control gating [mc-b1j.23]
+   ========================================================================== */
+
 body{font-family:ui-sans-serif,system-ui;margin:0;background:#fafafa;color:#111}
-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #e5e5e5;background:#fff;position:sticky;top:0}
-.header-right{display:flex;gap:12px;align-items:center}
+header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #e5e5e5;background:#fff;position:sticky;top:0;z-index:100;flex-wrap:wrap;gap:8px}
+.header-right{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 main{padding:16px;display:flex;flex-direction:column;gap:20px}
 h1{margin:0;font-size:18px}
 h2{margin:0 0 8px 0;font-size:14px;color:#444}
-button{border:1px solid #ddd;background:#fff;border-radius:10px;padding:6px 10px;cursor:pointer}
+button{border:1px solid #ddd;background:#fff;border-radius:10px;padding:6px 10px;cursor:pointer;font-size:13px}
 button:hover{background:#f5f5f5}
+button:disabled{opacity:0.5;cursor:not-allowed}
+
+/* ---- Override Banner ---- */
+.override-banner{display:flex;align-items:center;gap:10px;padding:6px 12px;border-radius:10px;font-size:13px;transition:all 0.2s}
+.override-banner.hidden{display:none}
+.override-active{background:#fef2f2;border:1px solid #fca5a5;color:#991b1b}
+.override-inactive{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
+.override-indicator{display:flex;align-items:center;gap:4px;white-space:nowrap}
+.override-reason{font-style:italic;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.override-ttl{font-family:ui-monospace,monospace;font-size:12px;background:rgba(0,0,0,0.06);padding:2px 8px;border-radius:6px}
+.override-disable-btn{background:#ef4444;color:#fff;border:none;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer}
+.override-disable-btn:hover{background:#dc2626}
+.override-enable-btn{background:#16a34a;color:#fff;border:none;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer}
+.override-enable-btn:hover{background:#15803d}
+
+/* ---- Modal ---- */
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000}
+.modal-overlay.hidden{display:none}
+.modal{background:#fff;border-radius:16px;width:90%;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,0.2);overflow:hidden}
+.modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #e5e5e5}
+.modal-header h3{margin:0;font-size:16px}
+.modal-close{background:none;border:none;font-size:20px;cursor:pointer;padding:0 4px;color:#666}
+.modal-close:hover{color:#111}
+.modal-body{padding:20px}
+.modal-desc{font-size:13px;color:#666;margin:0 0 16px 0;line-height:1.5}
+.modal-footer{display:flex;gap:10px;justify-content:flex-end;padding:16px 20px;border-top:1px solid #e5e5e5;background:#fafafa}
+
+/* ---- Form elements ---- */
+.form-label{display:block;font-size:12px;font-weight:600;color:#555;margin-bottom:4px;margin-top:12px}
+.form-label:first-child{margin-top:0}
+.required{color:#ef4444}
+.form-input{width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:10px;font-size:14px;box-sizing:border-box;font-family:inherit}
+.form-input:focus{outline:none;border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,0.15)}
+textarea.form-input{resize:vertical}
+.form-error{color:#ef4444;font-size:12px;margin-top:8px;padding:6px 10px;background:#fef2f2;border-radius:8px}
+.form-error.hidden{display:none}
+.ttl-presets{display:flex;gap:6px;margin:8px 0}
+.ttl-btn{background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:4px 12px;font-size:12px;color:#374151;cursor:pointer}
+.ttl-btn:hover{background:#e5e7eb}
+.ttl-btn.active{background:#111;color:#fff;border-color:#111}
+
+/* ---- Buttons ---- */
+.btn-secondary{background:#f3f4f6;border:1px solid #d1d5db;color:#374151;border-radius:10px;padding:8px 16px;cursor:pointer;font-size:13px}
+.btn-secondary:hover{background:#e5e7eb}
+.btn-danger{background:#ef4444;color:#fff;border:none;border-radius:10px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600}
+.btn-danger:hover{background:#dc2626}
+
+/* ---- Policy denied modal ---- */
+.denied-reason{background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;padding:12px;border-radius:10px;font-size:13px;line-height:1.5;margin:0 0 12px 0}
+.denied-hint{font-size:13px;color:#666;margin:0}
+
+/* ---- Section header ---- */
 .section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
 .section-header h2{margin:0}
 .view-toggle{display:flex;gap:0;border:1px solid #ddd;border-radius:10px;overflow:hidden}
 .toggle-btn{border:none;background:#fff;padding:5px 12px;cursor:pointer;font-size:12px;color:#666;transition:all 0.15s}
 .toggle-btn:hover{background:#f5f5f5}
 .toggle-btn.active{background:#111;color:#fff}
+
+/* ---- Agent tree ---- */
 .agents-tree{display:flex;flex-direction:column;gap:0}
-.agent-node{border:1px solid #e5e5e5;background:#fff;border-radius:12px;padding:10px;margin-bottom:6px;position:relative}
+.agent-node{border:1px solid #e5e5e5;background:#fff;border-radius:12px;padding:10px;margin-bottom:6px;position:relative;transition:all 0.15s}
+.agent-node.gated{border-color:#fca5a5;background:#fefce8}
 .agent-node .agent-header{display:flex;align-items:center;gap:8px}
 .agent-node .agent-name{font-weight:600;font-size:14px}
 .agent-node .agent-state{font-size:12px;color:#666}
 .agent-node .agent-task{font-size:12px;color:#888;margin-top:4px}
+.gated-badge{font-size:14px;margin-left:auto}
 .role-badge{display:inline-block;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600;line-height:1.4;text-transform:uppercase;letter-spacing:0.3px}
 .role-root{background:#f0e6ff;color:#7c3aed}
 .role-pdpm{background:#e0f2fe;color:#0369a1}
@@ -26,14 +87,34 @@ button:hover{background:#f5f5f5}
 .role-observer{background:#f3f4f6;color:#6b7280}
 .agent-children{margin-left:24px;padding-left:12px;border-left:2px solid #e5e5e5}
 .agent-children .agent-node:last-child{margin-bottom:0}
+
+/* ---- Gate notice on agent nodes ---- */
+.gate-notice{display:flex;align-items:center;gap:8px;font-size:11px;color:#b45309;margin-top:6px;padding:4px 8px;background:#fef3c7;border-radius:8px}
+.gate-override-btn{background:#f59e0b;color:#fff;border:none;border-radius:6px;padding:2px 8px;font-size:11px;cursor:pointer;white-space:nowrap}
+.gate-override-btn:hover{background:#d97706}
+
+/* ---- Kanban ---- */
 .kanban{display:flex;gap:12px;overflow:auto;padding-bottom:6px}
 .lane{min-width:280px;border:1px solid #e5e5e5;background:#fff;border-radius:14px;padding:10px}
 .lane-title{font-weight:700;margin-bottom:10px}
-.card{border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;background:#fff}
+.card{border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;background:#fff;transition:all 0.15s}
 .card.dragging{opacity:0.5}
+.card-gated{border-color:#fca5a5;background:repeating-linear-gradient(45deg,#fff,#fff 10px,#fef2f2 10px,#fef2f2 12px);cursor:not-allowed}
 .card .id{font-size:12px;color:#777}
 .card .title{font-weight:600;margin-top:2px}
-.card .sub{font-size:12px;color:#666;margin-top:6px;display:flex;gap:8px;justify-content:space-between}
+.card .sub{font-size:12px;color:#666;margin-top:6px;display:flex;gap:8px;justify-content:space-between;align-items:center}
+
+/* ---- Gated button ---- */
+.btn-gated{opacity:0.5;cursor:not-allowed;border-color:#fca5a5;color:#b91c1c}
+.btn-gated:hover{background:#fef2f2}
+
+/* ---- Card gate bar ---- */
+.card-gate-bar{display:flex;align-items:center;gap:6px;font-size:11px;color:#b45309;margin-top:8px;padding:4px 8px;background:#fef3c7;border-radius:8px}
+.gate-icon{font-size:12px}
+.gate-override-btn-small{background:#f59e0b;color:#fff;border:none;border-radius:6px;padding:2px 6px;font-size:10px;cursor:pointer;margin-left:auto}
+.gate-override-btn-small:hover{background:#d97706}
+
+/* ---- Cron ---- */
 .cron{display:flex;flex-direction:column;gap:8px}
 .cron-card{border:1px solid #e5e5e5;background:#fff;border-radius:12px;padding:10px}
 .cron-card .row{display:flex;gap:8px;justify-content:space-between;align-items:center}

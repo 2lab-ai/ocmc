@@ -525,6 +525,131 @@ CREATE INDEX IF NOT EXISTS idx_agents_parent_id ON agents(parent_id);
         assert!(VALID_ROLES.contains(&"observer"));
         assert!(!VALID_ROLES.contains(&"admin"));
     }
+
+    // --- Override session tests ---
+
+    async fn override_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        pool.execute(
+            r#"
+CREATE TABLE IF NOT EXISTS override_sessions (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  enabled_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_override_exp ON override_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_override_user ON override_sessions(username);
+"#,
+        )
+        .await
+        .unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn test_override_status_no_session() {
+        let pool = override_pool().await;
+        let status = get_override_status(&pool, "admin").await.unwrap();
+        assert!(!status.active);
+        assert!(status.session_id.is_none());
+        assert!(status.reason.is_none());
+        assert!(status.expires_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_override_status_active_session() {
+        let pool = override_pool().await;
+        let session_id = create_override_session(&pool, "admin", "hotfix deploy", 600)
+            .await
+            .unwrap();
+
+        let status = get_override_status(&pool, "admin").await.unwrap();
+        assert!(status.active);
+        assert_eq!(status.session_id.unwrap(), session_id);
+        assert_eq!(status.reason.unwrap(), "hotfix deploy");
+        assert!(status.expires_at.is_some());
+        assert!(status.enabled_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_override_status_after_revoke() {
+        let pool = override_pool().await;
+        create_override_session(&pool, "admin", "test", 600)
+            .await
+            .unwrap();
+
+        // Status is active
+        let status = get_override_status(&pool, "admin").await.unwrap();
+        assert!(status.active);
+
+        // Revoke
+        let revoked = revoke_override_session(&pool, "admin").await.unwrap();
+        assert_eq!(revoked, 1);
+
+        // Status is now inactive
+        let status = get_override_status(&pool, "admin").await.unwrap();
+        assert!(!status.active);
+    }
+
+    #[tokio::test]
+    async fn test_override_status_expired_session() {
+        let pool = override_pool().await;
+        // Create a session with 0 TTL (immediately expired)
+        // We need to insert manually with a past expires_at
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now();
+        let past = now - chrono::Duration::seconds(100);
+
+        sqlx::query(
+            "INSERT INTO override_sessions (id, username, reason, enabled_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind("admin")
+        .bind("test")
+        .bind(now.to_rfc3339())
+        .bind(past.to_rfc3339())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let status = get_override_status(&pool, "admin").await.unwrap();
+        assert!(!status.active, "Expired session should not be active");
+    }
+
+    #[tokio::test]
+    async fn test_override_create_and_revoke_roundtrip() {
+        let pool = override_pool().await;
+
+        // Create
+        let sid = create_override_session(&pool, "ceo", "incident-001", 300)
+            .await
+            .unwrap();
+        assert!(!sid.is_empty());
+
+        // Verify active
+        let status = get_override_status(&pool, "ceo").await.unwrap();
+        assert!(status.active);
+
+        // Revoke
+        let count = revoke_override_session(&pool, "ceo").await.unwrap();
+        assert_eq!(count, 1);
+
+        // Revoke again (should affect 0)
+        let count = revoke_override_session(&pool, "ceo").await.unwrap();
+        assert_eq!(count, 0);
+
+        // Different user not affected
+        create_override_session(&pool, "other", "test", 600)
+            .await
+            .unwrap();
+        let status = get_override_status(&pool, "ceo").await.unwrap();
+        assert!(!status.active);
+        let status = get_override_status(&pool, "other").await.unwrap();
+        assert!(status.active);
+    }
 }
 
 /// Write a policy-aware audit event.
@@ -631,4 +756,43 @@ pub async fn revoke_override_session(pool: &SqlitePool, username: &str) -> anyho
     .execute(pool)
     .await?;
     Ok(result.rows_affected())
+}
+
+/// Override session status for UI display.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OverrideStatus {
+    pub active: bool,
+    pub session_id: Option<String>,
+    pub reason: Option<String>,
+    pub expires_at: Option<String>,
+    pub enabled_at: Option<String>,
+}
+
+/// Get the current active override session for a user (if any).
+pub async fn get_override_status(pool: &SqlitePool, username: &str) -> anyhow::Result<OverrideStatus> {
+    let now = Utc::now().to_rfc3339();
+    let row: Option<(String, String, String, String)> = sqlx::query_as(
+        "SELECT id, reason, enabled_at, expires_at FROM override_sessions WHERE username = ? AND expires_at > ? AND revoked_at IS NULL ORDER BY enabled_at DESC LIMIT 1",
+    )
+    .bind(username)
+    .bind(&now)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(match row {
+        Some((id, reason, enabled_at, expires_at)) => OverrideStatus {
+            active: true,
+            session_id: Some(id),
+            reason: Some(reason),
+            expires_at: Some(expires_at),
+            enabled_at: Some(enabled_at),
+        },
+        None => OverrideStatus {
+            active: false,
+            session_id: None,
+            reason: None,
+            expires_at: None,
+            enabled_at: None,
+        },
+    })
 }
