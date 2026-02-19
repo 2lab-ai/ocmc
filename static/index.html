@@ -17,8 +17,14 @@
 
   <main>
     <section>
-      <h2>Agents</h2>
-      <div id="agents" class="agents"></div>
+      <div class="section-header">
+        <h2>Agents</h2>
+        <div class="view-toggle" id="agentViewToggle">
+          <button class="toggle-btn active" data-view="root-only">Root Only</button>
+          <button class="toggle-btn" data-view="all">All Agents</button>
+        </div>
+      </div>
+      <div id="agents" class="agents-tree"></div>
     </section>
 
     <section>

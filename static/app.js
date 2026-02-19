@@ -1,5 +1,8 @@
 const lanes = ["Backlog","Ready","Doing","Blocked","Done","Waiting Room"];
 
+// Agent view scope: 'root-only' or 'all'
+let agentViewScope = localStorage.getItem('agentViewScope') || 'root-only';
+
 async function apiGet(url){
   const r = await fetch(url);
   if(r.status===401){ window.location.href='/login'; return null; }
@@ -25,18 +28,106 @@ function el(tag, attrs={}, children=[]){
   return e;
 }
 
+function buildAgentTree(agents){
+  // Build a tree from flat list using parent_id.
+  const byId = new Map();
+  agents.forEach(a => byId.set(a.id, { ...a, children: [] }));
+
+  const roots = [];
+  byId.forEach(a => {
+    if(a.parent_id && byId.has(a.parent_id)){
+      byId.get(a.parent_id).children.push(a);
+    } else {
+      roots.push(a);
+    }
+  });
+  return roots;
+}
+
+function roleBadge(role){
+  const cls = {root:'role-root', pdpm:'role-pdpm', dev:'role-dev', qa:'role-qa', observer:'role-observer'};
+  return el('span',{class:`role-badge ${cls[role]||'role-observer'}`, text: role});
+}
+
+function renderAgentNode(agent, depth){
+  const node = el('div',{class:'agent-node'});
+
+  const header = el('div',{class:'agent-header'},[
+    roleBadge(agent.role),
+    el('span',{class:'agent-name', text: agent.display_name || agent.id}),
+    el('span',{class:'agent-state', text: `(${agent.state})`}),
+  ]);
+  node.appendChild(header);
+
+  if(agent.current_card_id){
+    node.appendChild(el('div',{class:'agent-task', text: `⚡ ${agent.current_card_id}`}));
+  } else {
+    node.appendChild(el('div',{class:'agent-task', text: '💤 waiting-room'}));
+  }
+
+  if(agent.children && agent.children.length > 0){
+    const childrenEl = el('div',{class:'agent-children'});
+    agent.children.forEach(c => childrenEl.appendChild(renderAgentNode(c, depth+1)));
+    node.appendChild(childrenEl);
+  }
+
+  return node;
+}
+
+function initViewToggle(){
+  const toggle = document.getElementById('agentViewToggle');
+  if(!toggle) return;
+  const btns = toggle.querySelectorAll('.toggle-btn');
+  btns.forEach(btn => {
+    if(btn.dataset.view === agentViewScope) btn.classList.add('active');
+    else btn.classList.remove('active');
+
+    btn.addEventListener('click', ()=>{
+      agentViewScope = btn.dataset.view;
+      localStorage.setItem('agentViewScope', agentViewScope);
+      btns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      if(window._lastSnapshot) render(window._lastSnapshot);
+    });
+  });
+}
+
 function render(snapshot){
+  window._lastSnapshot = snapshot;
   document.getElementById('status').textContent = `updated ${new Date(snapshot.generated_at).toLocaleTimeString()}`;
 
-  // Agents
-  const agents = document.getElementById('agents');
-  agents.innerHTML='';
-  snapshot.agents.forEach(a=>{
-    agents.appendChild(el('div',{class:'agent'},[
-      el('div',{text: `${a.display_name} (${a.state})`}),
-      el('div',{class:'meta', text: a.current_card_id || 'waiting-room'})
-    ]));
-  });
+  // Agents — render as tree
+  const agentsEl = document.getElementById('agents');
+  agentsEl.innerHTML='';
+
+  const tree = buildAgentTree(snapshot.agents);
+
+  if(agentViewScope === 'root-only'){
+    // Show only root agents (no children expanded inline, but show direct children count)
+    tree.forEach(root => {
+      const node = el('div',{class:'agent-node'});
+      const header = el('div',{class:'agent-header'},[
+        roleBadge(root.role),
+        el('span',{class:'agent-name', text: root.display_name || root.id}),
+        el('span',{class:'agent-state', text: `(${root.state})`}),
+      ]);
+      node.appendChild(header);
+      if(root.current_card_id){
+        node.appendChild(el('div',{class:'agent-task', text: `⚡ ${root.current_card_id}`}));
+      } else {
+        node.appendChild(el('div',{class:'agent-task', text: '💤 waiting-room'}));
+      }
+      // Show count of descendants
+      const totalDesc = countDescendants(root);
+      if(totalDesc > 0){
+        node.appendChild(el('div',{class:'agent-task', text: `👥 ${totalDesc} agent${totalDesc>1?'s':''} in hierarchy`}));
+      }
+      agentsEl.appendChild(node);
+    });
+  } else {
+    // Show full tree
+    tree.forEach(root => agentsEl.appendChild(renderAgentNode(root, 0)));
+  }
 
   // Kanban lanes
   const kb = document.getElementById('kanban');
@@ -149,5 +240,13 @@ function connectWs(){
   }
 }
 
+function countDescendants(node){
+  if(!node.children) return 0;
+  let c = node.children.length;
+  node.children.forEach(ch => c += countDescendants(ch));
+  return c;
+}
+
+initViewToggle();
 refresh();
 connectWs();
