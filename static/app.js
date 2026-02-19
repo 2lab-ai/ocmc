@@ -422,7 +422,7 @@ function render(snapshot){
   const byLane = new Map();
   lanes.forEach(l=>byLane.set(l,[]));
   snapshot.tasks.forEach(t=>{
-    const lane = lanes.includes(t.lane) ? t.lane : 'Ready';
+    const lane = lanes.includes(t.lane) ? t.lane : 'Waiting Room';
     byLane.get(lane).push(t);
   });
 
