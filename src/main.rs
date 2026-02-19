@@ -4,7 +4,7 @@ use anyhow::Context;
 use axum::{
     extract::{ws::WebSocketUpgrade, State},
     response::Response,
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use chrono::Utc;
@@ -77,6 +77,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/kanban", get(mc::handlers::kanban_get))
         .route("/api/task/:id/move", post(mc::handlers::task_move_post))
         .route("/api/task/:id/assign", post(mc::handlers::task_assign_post))
+        .route("/api/agents", get(mc::handlers::agents_list).post(mc::handlers::agents_create))
+        .route("/api/agents/:id", delete(mc::handlers::agents_delete))
+        .route("/api/agents/:id/reparent", post(mc::handlers::agents_reparent))
         .route("/api/cron/:id/toggle", post(mc::handlers::cron_toggle_post))
         .route("/api/cron/:id/run", post(mc::handlers::cron_run_post))
         .route("/api/override/enable", post(mc::handlers::override_enable_post))

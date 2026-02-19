@@ -198,6 +198,335 @@ pub async fn list_agents(pool: &SqlitePool) -> anyhow::Result<Vec<(String, Strin
     Ok(rows)
 }
 
+/// Full agent record for hierarchy API.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AgentRow {
+    pub id: String,
+    pub display_name: String,
+    pub role: String,
+    pub parent_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// List all agents with full hierarchy data.
+pub async fn list_agents_full(pool: &SqlitePool) -> anyhow::Result<Vec<AgentRow>> {
+    let rows = sqlx::query_as::<_, (String, String, String, Option<String>, String, String)>(
+        "SELECT id, display_name, role, parent_id, created_at, updated_at FROM agents ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, display_name, role, parent_id, created_at, updated_at)| AgentRow {
+            id,
+            display_name,
+            role,
+            parent_id,
+            created_at,
+            updated_at,
+        })
+        .collect())
+}
+
+/// Get a single agent by ID.
+pub async fn get_agent(pool: &SqlitePool, id: &str) -> anyhow::Result<Option<AgentRow>> {
+    let row = sqlx::query_as::<_, (String, String, String, Option<String>, String, String)>(
+        "SELECT id, display_name, role, parent_id, created_at, updated_at FROM agents WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(id, display_name, role, parent_id, created_at, updated_at)| AgentRow {
+        id,
+        display_name,
+        role,
+        parent_id,
+        created_at,
+        updated_at,
+    }))
+}
+
+/// Allowed agent roles.
+pub const VALID_ROLES: &[&str] = &["root", "pdpm", "dev", "qa", "observer"];
+
+/// Create a new agent.
+pub async fn create_agent(
+    pool: &SqlitePool,
+    id: &str,
+    display_name: &str,
+    role: &str,
+    parent_id: Option<&str>,
+) -> anyhow::Result<AgentRow> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO agents (id, display_name, role, parent_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(display_name)
+    .bind(role)
+    .bind(parent_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+
+    Ok(AgentRow {
+        id: id.to_string(),
+        display_name: display_name.to_string(),
+        role: role.to_string(),
+        parent_id: parent_id.map(|s| s.to_string()),
+        created_at: now.clone(),
+        updated_at: now,
+    })
+}
+
+/// Delete an agent by ID. Returns true if a row was deleted.
+pub async fn delete_agent(pool: &SqlitePool, id: &str) -> anyhow::Result<bool> {
+    let result = sqlx::query("DELETE FROM agents WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Update an agent's parent_id (reparent).
+pub async fn reparent_agent(
+    pool: &SqlitePool,
+    id: &str,
+    new_parent_id: Option<&str>,
+) -> anyhow::Result<bool> {
+    let now = Utc::now().to_rfc3339();
+    let result =
+        sqlx::query("UPDATE agents SET parent_id = ?, updated_at = ? WHERE id = ?")
+            .bind(new_parent_id)
+            .bind(&now)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Check if setting `agent_id.parent_id = new_parent_id` would create a cycle.
+/// Walks from new_parent_id up through the parent chain; if we encounter agent_id, it's a cycle.
+pub async fn would_create_cycle(
+    pool: &SqlitePool,
+    agent_id: &str,
+    new_parent_id: &str,
+) -> anyhow::Result<bool> {
+    // Self-parenting is always a cycle.
+    if agent_id == new_parent_id {
+        return Ok(true);
+    }
+
+    let mut current = new_parent_id.to_string();
+    // Walk up the tree from new_parent. If we reach agent_id, it's a cycle.
+    // Safety: limit iterations to prevent infinite loop on corrupt data.
+    for _ in 0..100 {
+        let row: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT parent_id FROM agents WHERE id = ?")
+                .bind(&current)
+                .fetch_optional(pool)
+                .await?;
+        match row {
+            Some((Some(pid),)) => {
+                if pid == agent_id {
+                    return Ok(true);
+                }
+                current = pid;
+            }
+            _ => break, // reached root or unknown agent
+        }
+    }
+    Ok(false)
+}
+
+/// Check if the agent has any children (used before delete).
+pub async fn has_children(pool: &SqlitePool, agent_id: &str) -> anyhow::Result<bool> {
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT COUNT(*) FROM agents WHERE parent_id = ?")
+            .bind(agent_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.map_or(false, |(c,)| c > 0))
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        // Create tables manually (simplified migration for tests).
+        pool.execute(
+            r#"
+CREATE TABLE IF NOT EXISTS agents (
+  id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'dev',
+  parent_id TEXT NULL REFERENCES agents(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_agents_parent_id ON agents(parent_id);
+"#,
+        )
+        .await
+        .unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn test_create_and_list_agents() {
+        let pool = test_pool().await;
+
+        // Create root agent
+        let root = create_agent(&pool, "main", "main", "root", None)
+            .await
+            .unwrap();
+        assert_eq!(root.id, "main");
+        assert_eq!(root.role, "root");
+        assert!(root.parent_id.is_none());
+
+        // Create child
+        let pdpm = create_agent(&pool, "pdpm-mc", "pdpm-mc", "pdpm", Some("main"))
+            .await
+            .unwrap();
+        assert_eq!(pdpm.parent_id.as_deref(), Some("main"));
+
+        // List
+        let agents = list_agents_full(&pool).await.unwrap();
+        assert_eq!(agents.len(), 2);
+        assert_eq!(agents[0].id, "main");
+        assert_eq!(agents[1].id, "pdpm-mc");
+    }
+
+    #[tokio::test]
+    async fn test_get_agent() {
+        let pool = test_pool().await;
+        create_agent(&pool, "main", "main", "root", None)
+            .await
+            .unwrap();
+
+        let found = get_agent(&pool, "main").await.unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().role, "root");
+
+        let missing = get_agent(&pool, "nonexistent").await.unwrap();
+        assert!(missing.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_create_duplicate_agent() {
+        let pool = test_pool().await;
+        create_agent(&pool, "main", "main", "root", None)
+            .await
+            .unwrap();
+        let result = create_agent(&pool, "main", "main2", "root", None).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("UNIQUE"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_agent() {
+        let pool = test_pool().await;
+        create_agent(&pool, "dev-a", "dev-a", "dev", None)
+            .await
+            .unwrap();
+
+        let deleted = delete_agent(&pool, "dev-a").await.unwrap();
+        assert!(deleted);
+
+        let deleted_again = delete_agent(&pool, "dev-a").await.unwrap();
+        assert!(!deleted_again);
+    }
+
+    #[tokio::test]
+    async fn test_reparent_agent() {
+        let pool = test_pool().await;
+        create_agent(&pool, "main", "main", "root", None)
+            .await
+            .unwrap();
+        create_agent(&pool, "pdpm-mc", "pdpm-mc", "pdpm", Some("main"))
+            .await
+            .unwrap();
+        create_agent(&pool, "dev-a", "dev-a", "dev", Some("main"))
+            .await
+            .unwrap();
+
+        // Reparent dev-a under pdpm-mc
+        let ok = reparent_agent(&pool, "dev-a", Some("pdpm-mc"))
+            .await
+            .unwrap();
+        assert!(ok);
+
+        let agent = get_agent(&pool, "dev-a").await.unwrap().unwrap();
+        assert_eq!(agent.parent_id.as_deref(), Some("pdpm-mc"));
+    }
+
+    #[tokio::test]
+    async fn test_cycle_detection_self() {
+        let pool = test_pool().await;
+        create_agent(&pool, "main", "main", "root", None)
+            .await
+            .unwrap();
+
+        let is_cycle = would_create_cycle(&pool, "main", "main")
+            .await
+            .unwrap();
+        assert!(is_cycle);
+    }
+
+    #[tokio::test]
+    async fn test_cycle_detection_indirect() {
+        let pool = test_pool().await;
+        create_agent(&pool, "a", "a", "root", None).await.unwrap();
+        create_agent(&pool, "b", "b", "pdpm", Some("a"))
+            .await
+            .unwrap();
+        create_agent(&pool, "c", "c", "dev", Some("b"))
+            .await
+            .unwrap();
+
+        // Reparenting a under c would create a→b→c→a cycle
+        let is_cycle = would_create_cycle(&pool, "a", "c").await.unwrap();
+        assert!(is_cycle);
+
+        // Reparenting c under a is not a cycle (c→a, already a→b→c→a? no, a→b→c currently)
+        // Actually: if c.parent_id = a, then tree is a→b (b.parent=a), a→c (c.parent=a). No cycle.
+        let no_cycle = would_create_cycle(&pool, "c", "a").await.unwrap();
+        assert!(!no_cycle);
+    }
+
+    #[tokio::test]
+    async fn test_has_children() {
+        let pool = test_pool().await;
+        create_agent(&pool, "main", "main", "root", None)
+            .await
+            .unwrap();
+        create_agent(&pool, "dev-a", "dev-a", "dev", Some("main"))
+            .await
+            .unwrap();
+
+        assert!(has_children(&pool, "main").await.unwrap());
+        assert!(!has_children(&pool, "dev-a").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_valid_roles() {
+        assert!(VALID_ROLES.contains(&"root"));
+        assert!(VALID_ROLES.contains(&"pdpm"));
+        assert!(VALID_ROLES.contains(&"dev"));
+        assert!(VALID_ROLES.contains(&"qa"));
+        assert!(VALID_ROLES.contains(&"observer"));
+        assert!(!VALID_ROLES.contains(&"admin"));
+    }
+}
+
 /// Write a policy-aware audit event.
 pub async fn audit_policy(
     pool: &SqlitePool,
