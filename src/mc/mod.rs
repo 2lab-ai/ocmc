@@ -4,6 +4,7 @@ pub mod bd;
 pub mod cron;
 pub mod db;
 pub mod handlers;
+pub mod policy;
 pub mod poller;
 pub mod ws;
 
@@ -31,6 +32,10 @@ pub struct McConfig {
 
     // session token signing key (HMAC-SHA256)
     pub session_secret: String,
+
+    // policy config
+    pub root_agent_id: String,
+    pub override_ttl_s: u64,
 }
 
 impl McConfig {
@@ -48,17 +53,35 @@ impl McConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(5000),
             bd_bin: std::env::var("MC_BD_BIN").unwrap_or_else(|_| "/hostbin/bd".to_string()),
-            gateway_url: std::env::var("MC_GATEWAY_URL").unwrap_or_else(|_| "ws://127.0.0.1:18789".to_string()),
-            gateway_token: std::env::var("MC_GATEWAY_TOKEN").ok().filter(|s| !s.trim().is_empty()),
-            gateway_password: std::env::var("MC_GATEWAY_PASSWORD").ok().filter(|s| !s.trim().is_empty()),
+            gateway_url: std::env::var("MC_GATEWAY_URL")
+                .unwrap_or_else(|_| "ws://127.0.0.1:18789".to_string()),
+            gateway_token: std::env::var("MC_GATEWAY_TOKEN")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
+            gateway_password: std::env::var("MC_GATEWAY_PASSWORD")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
             admin_user: std::env::var("MC_ADMIN_USER").unwrap_or_else(|_| "admin".to_string()),
-            admin_pass: std::env::var("MC_ADMIN_PASS").unwrap_or_else(|_| "change-me".to_string()),
-            session_secret: std::env::var("MC_SESSION_SECRET")
-                .unwrap_or_else(|_| {
-                    tracing::warn!("MC_SESSION_SECRET not set – using random ephemeral key (sessions won't survive restarts)");
-                    uuid::Uuid::new_v4().to_string()
-                }),
+            admin_pass: std::env::var("MC_ADMIN_PASS")
+                .unwrap_or_else(|_| "change-me".to_string()),
+            session_secret: std::env::var("MC_SESSION_SECRET").unwrap_or_else(|_| {
+                tracing::warn!("MC_SESSION_SECRET not set – using random ephemeral key (sessions won't survive restarts)");
+                uuid::Uuid::new_v4().to_string()
+            }),
+            root_agent_id: std::env::var("MC_ROOT_AGENT_ID")
+                .unwrap_or_else(|_| "main".to_string()),
+            override_ttl_s: std::env::var("MC_OVERRIDE_TTL_S")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(600),
         })
+    }
+
+    pub fn policy_config(&self) -> policy::PolicyConfig {
+        policy::PolicyConfig {
+            root_agent_id: self.root_agent_id.clone(),
+            override_ttl_s: self.override_ttl_s,
+        }
     }
 }
 
@@ -85,8 +108,10 @@ pub struct KanbanSnapshot {
 pub struct Agent {
     pub id: String,
     pub display_name: String,
+    pub role: String,
+    pub parent_id: Option<String>,
     pub current_card_id: Option<String>, // task:<id> or cron:<id>
-    pub state: String,                  // doing|waiting
+    pub state: String,                   // doing|waiting
     pub last_event_at: Option<DateTime<Utc>>,
 }
 

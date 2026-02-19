@@ -1,13 +1,13 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use axum::{
     extract::{ws::WebSocketUpgrade, State},
-    response::{Html, IntoResponse, Response},
+    response::Response,
     routing::{get, post},
     Router,
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use sqlx::SqlitePool;
 use tokio::sync::{broadcast, RwLock};
 use tower_http::{services::ServeDir, trace::TraceLayer};
@@ -79,6 +79,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/task/:id/assign", post(mc::handlers::task_assign_post))
         .route("/api/cron/:id/toggle", post(mc::handlers::cron_toggle_post))
         .route("/api/cron/:id/run", post(mc::handlers::cron_run_post))
+        .route("/api/override/enable", post(mc::handlers::override_enable_post))
+        .route("/api/override/disable", post(mc::handlers::override_disable_post))
         .route("/ws", get(ws_handler))
         .nest_service("/", ServeDir::new("./static").append_index_html_on_directories(true))
         .layer(TraceLayer::new_for_http())
