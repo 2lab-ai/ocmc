@@ -1,0 +1,43 @@
+# Mission Control — Docker Compose
+# Usage:  docker compose up --build
+# Docs:   docs/mission-control/DOCKER-RUNBOOK.md
+
+services:
+  mission-control:
+    build: .
+    container_name: mission-control
+    restart: unless-stopped
+
+    # ── Network: local-only ──────────────────────────────────
+    ports:
+      - "127.0.0.1:3000:3000"
+
+    # ── Volumes ──────────────────────────────────────────────
+    volumes:
+      # Persist SQLite database across restarts.
+      - mc-data:/data
+
+      # bd CLI binary from host (read-only).
+      - ${MC_BD_BIN_HOST:-/home/zhugehyuk/.local/bin/bd}:/hostbin/bd:ro
+
+      # bd .beads directory so the CLI can resolve issues (read-only).
+      # Mounted into /app/.beads — the container CWD is /app.
+      - ${MC_BEADS_DIR:-./.beads}:/app/.beads:ro
+
+    # ── Environment ──────────────────────────────────────────
+    environment:
+      MC_BIND_HOST: "0.0.0.0"
+      MC_BIND_PORT: "3000"
+      MC_SQLITE_URL: "sqlite:///data/mc.db"
+      MC_BD_BIN: "/hostbin/bd"
+      MC_POLL_MS: "${MC_POLL_MS:-5000}"
+      MC_ADMIN_USER: "${MC_ADMIN_USER:-admin}"
+      MC_ADMIN_PASS: "${MC_ADMIN_PASS:?Set MC_ADMIN_PASS in .env or environment}"
+      MC_GATEWAY_URL: "${MC_GATEWAY_URL:-ws://host.docker.internal:18789}"
+      MC_GATEWAY_TOKEN: "${MC_GATEWAY_TOKEN:-}"
+      MC_GATEWAY_PASSWORD: "${MC_GATEWAY_PASSWORD:-}"
+      RUST_LOG: "${RUST_LOG:-info}"
+
+volumes:
+  mc-data:
+    driver: local

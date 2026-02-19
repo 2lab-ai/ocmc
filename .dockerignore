@@ -1,0 +1,12 @@
+# Exclude everything not needed for the build.
+target/
+.git/
+.beads/
+.claude/
+docs/
+*.md
+.env
+.env.example
+.gitignore
+.gitattributes
+docker-compose.yml
