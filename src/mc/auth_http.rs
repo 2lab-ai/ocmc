@@ -55,7 +55,9 @@ pub async fn login_post(
     let mut headers = HeaderMap::new();
     headers.insert(
         axum::http::header::SET_COOKIE,
-        auth::set_session_cookie(&f.username).parse().unwrap(),
+        auth::set_session_cookie(&f.username, &state.cfg.session_secret)
+            .parse()
+            .unwrap(),
     );
     headers.insert(axum::http::header::LOCATION, "/".parse().unwrap());
 

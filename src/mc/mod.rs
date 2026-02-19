@@ -28,6 +28,9 @@ pub struct McConfig {
     // auth bootstrap
     pub admin_user: String,
     pub admin_pass: String,
+
+    // session token signing key (HMAC-SHA256)
+    pub session_secret: String,
 }
 
 impl McConfig {
@@ -50,6 +53,11 @@ impl McConfig {
             gateway_password: std::env::var("MC_GATEWAY_PASSWORD").ok().filter(|s| !s.trim().is_empty()),
             admin_user: std::env::var("MC_ADMIN_USER").unwrap_or_else(|_| "admin".to_string()),
             admin_pass: std::env::var("MC_ADMIN_PASS").unwrap_or_else(|_| "change-me".to_string()),
+            session_secret: std::env::var("MC_SESSION_SECRET")
+                .unwrap_or_else(|_| {
+                    tracing::warn!("MC_SESSION_SECRET not set – using random ephemeral key (sessions won't survive restarts)");
+                    uuid::Uuid::new_v4().to_string()
+                }),
         })
     }
 }
