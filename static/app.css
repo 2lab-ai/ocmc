@@ -1,0 +1,23 @@
+body{font-family:ui-sans-serif,system-ui;margin:0;background:#fafafa;color:#111}
+header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #e5e5e5;background:#fff;position:sticky;top:0}
+.header-right{display:flex;gap:12px;align-items:center}
+main{padding:16px;display:flex;flex-direction:column;gap:20px}
+h1{margin:0;font-size:18px}
+h2{margin:0 0 8px 0;font-size:14px;color:#444}
+button{border:1px solid #ddd;background:#fff;border-radius:10px;padding:6px 10px;cursor:pointer}
+button:hover{background:#f5f5f5}
+.agents{display:flex;gap:10px;flex-wrap:wrap}
+.agent{border:1px solid #e5e5e5;background:#fff;border-radius:12px;padding:10px;min-width:180px}
+.agent .meta{font-size:12px;color:#666;margin-top:4px}
+.kanban{display:flex;gap:12px;overflow:auto;padding-bottom:6px}
+.lane{min-width:280px;border:1px solid #e5e5e5;background:#fff;border-radius:14px;padding:10px}
+.lane-title{font-weight:700;margin-bottom:10px}
+.card{border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;background:#fff}
+.card.dragging{opacity:0.5}
+.card .id{font-size:12px;color:#777}
+.card .title{font-weight:600;margin-top:2px}
+.card .sub{font-size:12px;color:#666;margin-top:6px;display:flex;gap:8px;justify-content:space-between}
+.cron{display:flex;flex-direction:column;gap:8px}
+.cron-card{border:1px solid #e5e5e5;background:#fff;border-radius:12px;padding:10px}
+.cron-card .row{display:flex;gap:8px;justify-content:space-between;align-items:center}
+.cron-card .small{font-size:12px;color:#666}
