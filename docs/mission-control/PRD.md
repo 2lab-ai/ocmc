@@ -1,7 +1,7 @@
 # Mission Control — Product Requirements Document (PRD)
 
 > **bd id:** `clawd-ml1`  
-> **Status:** Draft v2.1 (SSOT)  
+> **Status:** Draft v2.2 (SSOT)  
 > **Date:** 2026-02-19  
 > **Related:** [SPEC.md](./SPEC.md) · [DECISIONS.md](./DECISIONS.md)
 
@@ -18,11 +18,16 @@ PRD v2.x adds a non-negotiable operating model:
 - **CEO direct control defaults to root-only:** CEO can directly control **root = `main`** by default.
 - **CEO override exists:** CEO can “break glass” to directly control any agent/task, but it must be explicit, time-bounded, and audited.
 - **New project intake:** MC must support initiating a new project in a structured way (create project + assign a pdpm + create an initial bd epic/task skeleton).
+- **Team & prompt design:** each project may require a different team. `pdpm*` must design the team and **generate/maintain each agent’s system prompt** as a first-class artifact.
 
 This PRD is the **single source of truth** for product behavior. SPEC must follow.
 
 Decision anchors:
-- **ADR-015** (hierarchy + routing + break-glass) and **ADR-016** (project intake) in [DECISIONS.md](./DECISIONS.md).
+- **ADR-015** (hierarchy + routing + break-glass)
+- **ADR-016** (project intake)
+- **ADR-017** (prompt artifacts + PD/PM prompt lifecycle)
+
+See [DECISIONS.md](./DECISIONS.md).
 
 ---
 
@@ -178,7 +183,31 @@ MC must support a structured “start a new project” flow.
 - a project record in MC (for grouping/filters)
 - an agent hierarchy update (attach pdpm under `main`; optionally attach team members)
 
-> Intake should not attempt to fully automate “spawning” new agent processes in MVP. It should produce consistent state + tasks so the runtime/orchestrator can act.
+#### 5.6.1 Team design + system prompt generation (required procedure)
+
+Because projects require different teams, the intake flow must explicitly create a **prompt + team design loop**:
+
+1) **`main` writes the project-specific `pdpm*` system prompt** (meta-cognition based), using the template in:
+   - `docs/mission-control/PDPM_PROMPT_TEMPLATE.md`
+2) The `pdpm*` produces a **Team Plan** (roles, milestones, risks, boundaries).
+3) The `pdpm*` generates and maintains a **system prompt per child agent** (dev/qa/etc), aligned with:
+   - chain-of-command rules
+   - evidence protocol (bd comments)
+   - merge-when-green policy
+
+> MVP does not need to automatically spawn agent processes. It must make the procedure explicit and auditable.
+
+#### 5.6.2 Prompt artifact metadata (P1)
+
+MC must store and display **prompt metadata** (at minimum) so the CEO can audit who is responsible for what:
+
+- project → pdpm id
+- agent id → role → parent id
+- prompt version / updated_at
+- prompt content hash (e.g. sha256)
+- prompt author (main vs pdpm)
+
+(Full prompt text storage may be added later; see SPEC guardrails.)
 
 ### 5.7 Cron dashboard (P1)
 
@@ -230,5 +259,5 @@ All state mutations are subject to:
 ## 9. Roadmap (indicative)
 
 - **P0:** Observability + Kanban + agent registry + hierarchy view + policy gating + audit logging + root-only defaults
-- **P1:** CEO override UX + audit query UI + cron controls + **project intake**
+- **P1:** CEO override UX + audit query UI + cron controls + **project intake** + prompt metadata display
 - **P2:** Instruction dispatch console (if needed) + agent health/stuck detection integration + notifications
