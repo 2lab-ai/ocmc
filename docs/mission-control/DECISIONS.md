@@ -442,6 +442,92 @@ Alternatives considered:
 
 ---
 
+## ADR-016: Project intake via bd epic + MC project metadata {#adr-016}
+
+**Date:** 2026-02-19
+**Status:** Accepted
+
+### Context
+
+The operating model assumes multiple concurrent initiatives, each with:
+- a dedicated `pdpm*` (manager agent)
+- a structured bd task tree (epic → children)
+- an explicit grouping/filtering concept in MC ("show me this project")
+
+Without a first-class intake mechanism, new projects are created ad-hoc:
+- inconsistent task skeletons
+- unclear ownership (which pdpm owns it?)
+- no reliable filter primitive beyond manual labels
+
+We want an approach that:
+- keeps **bd as SSOT** for tasks
+- gives MC enough metadata to render projects cleanly
+- does not require full runtime agent spawning automation in MVP
+
+### Decision
+
+Implement **project intake** as a control-plane flow that:
+
+1) Creates a **bd root issue / epic** for the project (plus a minimal child skeleton).
+2) Persists a **projects** record in MC that references the bd root issue id.
+3) Optionally registers/links a `pdpm*` agent to the project (hierarchy: parent=`main`).
+
+Projects are therefore:
+- **task reality** in bd (epic + children)
+- **UI grouping + ownership metadata** in MC (projects table)
+
+### Consequences
+
+- **Positive:** Consistent project startup; clearer ownership and filtering.
+- **Positive:** No violation of bd SSOT; MC stores only lightweight metadata.
+- **Negative:** Two sources exist for “project identity” (bd epic + MC project row); must keep references consistent.
+
+---
+
+## ADR-017: Prompt artifacts as first-class metadata (PD/PM generates and maintains system prompts) {#adr-017}
+
+**Date:** 2026-02-19
+**Status:** Accepted
+
+### Context
+
+Projects require different teams. The PD/PM is responsible for:
+- designing the team
+- generating and maintaining each agent’s **system prompt**
+
+Without treating prompts as managed artifacts:
+- roles drift and responsibilities blur
+- routing constraints can be violated silently
+- the CEO cannot audit “who is supposed to do what” reliably
+
+We also have a specific authoring responsibility:
+- `main` must draft the **project-specific PD/PM system prompt** using meta-cognition (higher-level reasoning about governance, risks, milestones).
+
+### Decision
+
+1) Define and standardize a **PD/PM system prompt template** (project-specific) authored by `main`:
+   - `docs/mission-control/PDPM_PROMPT_TEMPLATE.md`
+2) Require PD/PM to produce:
+   - a Team Plan (bd comment)
+   - a Prompt Registry (prompt metadata per agent)
+3) Require Mission Control to store/display **prompt metadata** (at minimum):
+   - agent id / role / parent
+   - project association
+   - prompt version, updated_at
+   - prompt hash (sha256)
+   - author (main vs pdpm)
+
+Full prompt text storage is optional and must be guarded (prompts may accidentally contain tokens).
+
+### Consequences
+
+- **Positive:** Clear accountability and auditability of agent responsibilities.
+- **Positive:** Reduces prompt drift; makes routing constraints explicit.
+- **Negative:** Additional schema/UI surface area (prompt metadata).
+- **Negative:** If prompt text is stored, it increases sensitivity of the DB; default to metadata-only.
+
+---
+
 ## Decision Log Rules
 
 1. New ADRs are appended with the next sequential number.
