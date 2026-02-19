@@ -61,7 +61,7 @@ pub async fn list_issues(cfg: &McConfig) -> anyhow::Result<Vec<TaskCard>> {
 }
 
 fn lane_from_issue(i: &BdIssue) -> String {
-    // Fixed lanes via labels, fallback from bd status.
+    // Labels take priority over status (PRD §4.1).
     if i.labels.iter().any(|l| l == "mc/backlog") {
         return "Backlog".to_string();
     }
@@ -78,11 +78,14 @@ fn lane_from_issue(i: &BdIssue) -> String {
         return "Done".to_string();
     }
 
+    // No mc/* label — fall back to bd status.
+    // Tasks with a clear status map to the corresponding lane;
+    // everything else goes to Waiting Room (PRD §4.1).
     match i.status.as_str() {
         "in_progress" => "Doing".to_string(),
         "blocked" => "Blocked".to_string(),
         "closed" => "Done".to_string(),
-        _ => "Ready".to_string(),
+        _ => "Waiting Room".to_string(),
     }
 }
 
@@ -150,6 +153,8 @@ fn labels_for_lane(lane: &str) -> (Vec<&'static str>, Vec<&'static str>) {
         "Doing" => Some("mc/doing"),
         "Blocked" => Some("mc/blocked"),
         "Done" => Some("mc/done"),
+        // Waiting Room: remove all mc/* lane labels (task has no explicit lane)
+        "Waiting Room" => None,
         _ => None,
     };
     let remove = all
