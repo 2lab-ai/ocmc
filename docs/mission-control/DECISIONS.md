@@ -202,6 +202,169 @@ Use **vanilla JavaScript** with static HTML/CSS served from a `static/` director
 
 ---
 
+## ADR-008: Remove legacy Leptos UI code {#adr-008}
+
+**Date:** 2026-02-19
+**Status:** Accepted
+**Decided by:** Agent (auto-decision during task decomposition, mc-b1j.1)
+
+### Context
+
+The repo contains `src/ui/mod.rs` with a Leptos-based frontend (Dashboard component using reqwasm/gloo-net). This code is dead — `main.rs` does not declare `mod ui`, and the project uses vanilla JS (`static/`) per ADR-007. The Leptos code references hardcoded `ws://localhost:3000/ws` and imports crates not in Cargo.toml.
+
+### Decision
+
+Remove `src/ui/` entirely. It's dead code that confuses contributors and may cause grep false positives.
+
+### Consequences
+
+- **Positive:** Cleaner codebase, no confusion about which UI is active.
+- **Negative:** None meaningful. If Leptos is ever reconsidered (unlikely per ADR-007), it can be rebuilt.
+
+---
+
+## ADR-009: Waiting Room lane for uncategorized tasks {#adr-009}
+
+**Date:** 2026-02-19
+**Status:** Accepted
+**Decided by:** Agent (auto-decision during task decomposition, mc-b1j.2)
+
+### Context
+
+PRD §4.1 specifies "Waiting Room for uncategorized" tasks. However, `bd.rs::lane_from_issue()` defaults unknown status to "Ready", conflating truly ready tasks with tasks that haven't been triaged. The JS frontend already includes "Waiting Room" in its lanes array.
+
+### Decision
+
+Change the default lane in `lane_from_issue()` from "Ready" to "Waiting Room" for tasks that have:
+- No `mc/*` label, AND
+- Status not in `{in_progress, blocked, closed}`
+
+Tasks explicitly labeled `mc/ready` or with a clear ready-equivalent status retain the "Ready" lane.
+
+### Consequences
+
+- **Positive:** New/uncategorized tasks are visually separated from triaged-ready tasks.
+- **Positive:** Matches PRD intent and existing frontend support.
+- **Negative:** Existing tasks with no labels will shift from Ready to Waiting Room on upgrade (one-time visual change, no data mutation).
+
+---
+
+## ADR-010: Session tokens over plaintext username cookies {#adr-010}
+
+**Date:** 2026-02-19
+**Status:** Accepted
+**Decided by:** Agent (auto-decision during task decomposition, mc-b1j.10)
+
+### Context
+
+SPEC §9 acknowledges that `mc_session=<username>` is a known limitation. Anyone on the LAN could forge a session by setting the cookie value. While the threat model is low (single-operator LAN), this is a defense-in-depth improvement that's cheap to implement.
+
+### Decision
+
+Replace plaintext username cookies with UUID session tokens:
+1. Add `sessions` table (id UUID PK, username, created_at, expires_at).
+2. On login, insert session row, set cookie to UUID.
+3. `AuthedUser` extractor looks up UUID in sessions table.
+4. Default session TTL: 24 hours (configurable via `MC_SESSION_TTL_HOURS`).
+
+### Consequences
+
+- **Positive:** Cookie forgery requires guessing a UUID (infeasible).
+- **Positive:** Sessions can be revoked server-side (delete row).
+- **Negative:** Extra DB lookup per authenticated request (~0.1ms with SQLite, negligible).
+- **Negative:** Slightly more complex auth code (~20 extra lines).
+
+---
+
+## ADR-011: Agent CRUD API for dynamic registration {#adr-011}
+
+**Date:** 2026-02-19
+**Status:** Accepted
+**Decided by:** Agent (auto-decision during task decomposition, mc-b1j.6)
+
+### Context
+
+Currently agents are hardcoded via `db::seed_default_agents()` (main, opus46). PRD §4.2 references "registered agents" implying dynamic registration should be possible. As the fleet grows, hard-coding agent lists is unsustainable.
+
+### Decision
+
+Add REST API for agent management:
+- `GET /api/agents` — list all
+- `POST /api/agents` — register new agent `{id, display_name}`
+- `DELETE /api/agents/:id` — unregister
+
+Keep `seed_default_agents()` as a bootstrap convenience. API mutations are audit-logged.
+
+### Consequences
+
+- **Positive:** Operators can add/remove agents without code changes.
+- **Positive:** Opens the door for agent self-registration in future.
+- **Negative:** No role/permission model yet — any authenticated user can add/remove agents.
+
+---
+
+## ADR-012: Keep Cron Gateway RPC as stub until protocol is documented {#adr-012}
+
+**Date:** 2026-02-19
+**Status:** Accepted
+**Decided by:** Agent (auto-decision during task decomposition, mc-b1j.11)
+
+### Context
+
+ADR-006 established Gateway RPC as the target for cron integration, with a stub for MVP. The Gateway WS protocol is still undocumented. Attempting to implement against an unstable API would waste effort.
+
+### Decision
+
+Keep cron.rs as a stub. Create a placeholder task (mc-b1j.11) that becomes actionable when Gateway API docs are available. The UI shell for cron remains, showing empty state. Mark mc-b1j.11 as P2.
+
+### Consequences
+
+- **Positive:** No wasted effort on unstable integration.
+- **Positive:** Task is tracked and ready when the dependency resolves.
+- **Negative:** Cron section continues to show empty state.
+
+---
+
+## ADR-013: Multi-stage Dockerfile with bd bind-mount {#adr-013}
+
+**Date:** 2026-02-19
+**Status:** Accepted
+**Decided by:** Agent (opus46, mc-b1j.12)
+
+### Context
+
+SPEC §10 outlines both bare-metal and Docker deployment. We need a production-ready Dockerfile and Docker Compose setup for single-machine deployment.
+
+Key constraints:
+1. The bd CLI binary lives on the host (`~/.local/bin/bd`) and is statically linked — can be bind-mounted.
+2. bd reads `.beads/` relative to CWD to resolve issues.
+3. SQLite database must persist across container restarts.
+4. Dashboard must be local-only (not exposed on 0.0.0.0 on the host).
+
+Considered approaches:
+1. **Install bd inside the container** — Requires copying the binary or building from source inside Docker. Fragile if bd is updated on the host.
+2. **Bind-mount bd + .beads from host** — Simple, always uses the host's current bd version and data.
+3. **Volume for everything** — Over-sharing; mounts too much of the host filesystem.
+
+### Decision
+
+- **Multi-stage Dockerfile**: Build stage uses `rust:1.85-bookworm`, runtime uses `debian:bookworm-slim` (~80MB final image).
+- **Bind-mount bd binary** at `/hostbin/bd` (read-only).
+- **Bind-mount `.beads/`** at `/app/.beads/` (read-only) — container CWD is `/app`, so bd finds its data.
+- **Named volume** `mc-data` for SQLite persistence at `/data/`.
+- **Port binding**: `127.0.0.1:3000:3000` — local-only by design.
+- **`MC_ADMIN_PASS` required** — docker-compose.yml uses `${MC_ADMIN_PASS:?...}` to fail fast if unset.
+
+### Consequences
+
+- **Positive:** Final image under 100MB. Single `docker compose up --build` to deploy.
+- **Positive:** bd binary stays on the host — no version drift, no rebuild needed when bd updates.
+- **Positive:** `.beads/` is read-only in container, preventing accidental writes.
+- **Negative:** Host must have a linux/amd64 static bd binary. Won't work on ARM hosts without a compatible binary.
+- **Negative:** Dependency caching in Docker is approximate (skeleton project trick); full recompile on any Cargo.toml change.
+
+---
+
 ## Decision Log Rules
 
 1. New ADRs are appended with the next sequential number.
