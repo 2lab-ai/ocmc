@@ -1,7 +1,0 @@
-{
-  "last_failure": "2026-02-20T11:29:30.900525497+09:00",
-  "failure_count": 6,
-  "backoff_until": "2026-02-20T11:59:30.900525694+09:00",
-  "needs_manual_sync": true,
-  "failure_reason": "git pull failed: exit status 1\nfatal: couldn't find remote ref feat/mc-b1j.4-lane-counts\n"
-}

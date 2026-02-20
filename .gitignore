@@ -1,3 +1,7 @@
 target/
 .env
 !.env.example
+
+# local agent/mission-control state
+.beads/
+.claude/
