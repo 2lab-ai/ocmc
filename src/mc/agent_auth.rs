@@ -11,8 +11,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::AppState;
-use super::db;
+use super::{db, AppState};
 
 /// Hash a raw API key to hex SHA-256.
 pub fn hash_api_key(key: &str) -> String {
