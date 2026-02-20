@@ -5,7 +5,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{mc, AppState};
+use super::AppState;
 
 use super::auth::AuthedUser;
 use super::policy::{
@@ -19,7 +19,7 @@ use super::policy::{
 pub async fn kanban_get(
     _user: AuthedUser,
     State(state): State<AppState>,
-) -> Result<Json<mc::KanbanSnapshot>, (StatusCode, String)> {
+) -> Result<Json<super::KanbanSnapshot>, (StatusCode, String)> {
     let r = state.cache.read().await;
     if let Some(snapshot) = &r.snapshot {
         Ok(Json(snapshot.clone()))
@@ -93,7 +93,7 @@ pub async fn task_move_post(
     }))
     .unwrap();
 
-    mc::db::audit_policy(
+    super::db::audit_policy(
         &state.pool,
         &ActorKind::User,
         &user.0,
@@ -115,11 +115,11 @@ pub async fn task_move_post(
         ));
     }
 
-    mc::bd::set_lane(&state.cfg, &id, &req.lane)
+    super::bd::set_lane(&state.cfg, &id, &req.lane)
         .await
         .map_err(internal)?;
 
-    let _ = state.events_tx.send(mc::McEvent::Refresh {
+    let _ = state.events_tx.send(super::McEvent::Refresh {
         at: chrono::Utc::now(),
         reason: format!("task.move:{id}"),
     });
@@ -186,7 +186,7 @@ pub async fn task_assign_post(
     }))
     .unwrap();
 
-    mc::db::audit_policy(
+    super::db::audit_policy(
         &state.pool,
         &ActorKind::User,
         &user.0,
@@ -208,11 +208,11 @@ pub async fn task_assign_post(
         ));
     }
 
-    mc::bd::set_assignee(&state.cfg, &id, req.assignee.as_deref())
+    super::bd::set_assignee(&state.cfg, &id, req.assignee.as_deref())
         .await
         .map_err(internal)?;
 
-    let _ = state.events_tx.send(mc::McEvent::Refresh {
+    let _ = state.events_tx.send(super::McEvent::Refresh {
         at: chrono::Utc::now(),
         reason: format!("task.assign:{id}"),
     });
@@ -247,7 +247,7 @@ pub async fn cron_toggle_post(
     }))
     .unwrap();
 
-    mc::db::audit_policy(
+    super::db::audit_policy(
         &state.pool,
         &ActorKind::User,
         &user.0,
@@ -258,11 +258,11 @@ pub async fn cron_toggle_post(
     .await
     .map_err(internal)?;
 
-    mc::cron::toggle(&state.cfg, &id, req.enabled)
+    super::cron::toggle(&state.cfg, &id, req.enabled)
         .await
         .map_err(internal)?;
 
-    let _ = state.events_tx.send(mc::McEvent::Refresh {
+    let _ = state.events_tx.send(super::McEvent::Refresh {
         at: chrono::Utc::now(),
         reason: format!("cron.toggle:{id}"),
     });
@@ -280,7 +280,7 @@ pub async fn cron_run_post(
 ) -> Result<(), (StatusCode, String)> {
     let decision = PolicyDecision::Allow;
 
-    mc::db::audit_policy(
+    super::db::audit_policy(
         &state.pool,
         &ActorKind::User,
         &user.0,
@@ -291,9 +291,9 @@ pub async fn cron_run_post(
     .await
     .map_err(internal)?;
 
-    mc::cron::run_now(&state.cfg, &id).await.map_err(internal)?;
+    super::cron::run_now(&state.cfg, &id).await.map_err(internal)?;
 
-    let _ = state.events_tx.send(mc::McEvent::Refresh {
+    let _ = state.events_tx.send(super::McEvent::Refresh {
         at: chrono::Utc::now(),
         reason: format!("cron.run:{id}"),
     });
@@ -330,14 +330,14 @@ pub async fn override_enable_post(
     }
 
     let ttl = req.ttl_s.unwrap_or(state.cfg.override_ttl_s);
-    let session_id = mc::db::create_override_session(&state.pool, &user.0, &req.reason, ttl)
+    let session_id = super::db::create_override_session(&state.pool, &user.0, &req.reason, ttl)
         .await
         .map_err(internal)?;
 
     let expires_at =
         (chrono::Utc::now() + chrono::Duration::seconds(ttl as i64)).to_rfc3339();
 
-    mc::db::audit_policy(
+    super::db::audit_policy(
         &state.pool,
         &ActorKind::User,
         &user.0,
@@ -366,8 +366,8 @@ pub async fn override_enable_post(
 pub async fn override_status_get(
     user: AuthedUser,
     State(state): State<AppState>,
-) -> Result<Json<mc::db::OverrideStatus>, (StatusCode, String)> {
-    let status = mc::db::get_override_status(&state.pool, &user.0)
+) -> Result<Json<super::db::OverrideStatus>, (StatusCode, String)> {
+    let status = super::db::get_override_status(&state.pool, &user.0)
         .await
         .map_err(internal)?;
     Ok(Json(status))
@@ -381,11 +381,11 @@ pub async fn override_disable_post(
     user: AuthedUser,
     State(state): State<AppState>,
 ) -> Result<(), (StatusCode, String)> {
-    let revoked = mc::db::revoke_override_session(&state.pool, &user.0)
+    let revoked = super::db::revoke_override_session(&state.pool, &user.0)
         .await
         .map_err(internal)?;
 
-    mc::db::audit_policy(
+    super::db::audit_policy(
         &state.pool,
         &ActorKind::User,
         &user.0,
@@ -500,8 +500,8 @@ pub async fn policy_check_post(
 pub async fn agents_list(
     _user: AuthedUser,
     State(state): State<AppState>,
-) -> Result<Json<Vec<mc::db::AgentRow>>, (StatusCode, String)> {
-    let agents = mc::db::list_agents_full(&state.pool)
+) -> Result<Json<Vec<super::db::AgentRow>>, (StatusCode, String)> {
+    let agents = super::db::list_agents_full(&state.pool)
         .await
         .map_err(internal)?;
     Ok(Json(agents))
@@ -527,7 +527,7 @@ pub async fn agents_create(
     user: AuthedUser,
     State(state): State<AppState>,
     Json(req): Json<CreateAgentReq>,
-) -> Result<(StatusCode, Json<mc::db::AgentRow>), (StatusCode, String)> {
+) -> Result<(StatusCode, Json<super::db::AgentRow>), (StatusCode, String)> {
     // Validate id not empty
     if req.id.trim().is_empty() {
         return Err((
@@ -537,12 +537,12 @@ pub async fn agents_create(
     }
 
     // Validate role
-    if !mc::db::VALID_ROLES.contains(&req.role.as_str()) {
+    if !super::db::VALID_ROLES.contains(&req.role.as_str()) {
         return Err((
             StatusCode::BAD_REQUEST,
             serde_json::to_string(&serde_json::json!({
                 "error": "invalid_role",
-                "reason": format!("Role must be one of: {:?}", mc::db::VALID_ROLES),
+                "reason": format!("Role must be one of: {:?}", super::db::VALID_ROLES),
             }))
             .unwrap(),
         ));
@@ -550,7 +550,7 @@ pub async fn agents_create(
 
     // Validate parent exists if provided
     if let Some(ref pid) = req.parent_id {
-        let parent = mc::db::get_agent(&state.pool, pid)
+        let parent = super::db::get_agent(&state.pool, pid)
             .await
             .map_err(internal)?;
         if parent.is_none() {
@@ -607,7 +607,7 @@ pub async fn agents_create(
     }))
     .unwrap();
 
-    mc::db::audit_policy(
+    super::db::audit_policy(
         &state.pool,
         &ActorKind::User,
         &user.0,
@@ -630,7 +630,7 @@ pub async fn agents_create(
     }
 
     // Create the agent
-    let agent = mc::db::create_agent(
+    let agent = super::db::create_agent(
         &state.pool,
         &req.id,
         &req.display_name,
@@ -653,7 +653,7 @@ pub async fn agents_create(
         }
     })?;
 
-    let _ = state.events_tx.send(mc::McEvent::Refresh {
+    let _ = state.events_tx.send(super::McEvent::Refresh {
         at: chrono::Utc::now(),
         reason: format!("agent.create:{}", req.id),
     });
@@ -675,7 +675,7 @@ pub async fn agents_delete(
     // Forbid deleting the root agent.
     if id == policy_cfg.root_agent_id {
         let payload = serde_json::to_string(&serde_json::json!({"agent_id": id})).unwrap();
-        mc::db::audit_policy(
+        super::db::audit_policy(
             &state.pool,
             &ActorKind::User,
             &user.0,
@@ -695,7 +695,7 @@ pub async fn agents_delete(
     }
 
     // Check agent exists
-    let agent = mc::db::get_agent(&state.pool, &id)
+    let agent = super::db::get_agent(&state.pool, &id)
         .await
         .map_err(internal)?;
     if agent.is_none() {
@@ -710,7 +710,7 @@ pub async fn agents_delete(
     }
 
     // Forbid deleting agents that have children (must reparent first).
-    let has_children = mc::db::has_children(&state.pool, &id)
+    let has_children = super::db::has_children(&state.pool, &id)
         .await
         .map_err(internal)?;
     if has_children {
@@ -755,7 +755,7 @@ pub async fn agents_delete(
     );
 
     let payload = serde_json::to_string(&serde_json::json!({"agent_id": id})).unwrap();
-    mc::db::audit_policy(
+    super::db::audit_policy(
         &state.pool,
         &ActorKind::User,
         &user.0,
@@ -777,7 +777,7 @@ pub async fn agents_delete(
         ));
     }
 
-    let deleted = mc::db::delete_agent(&state.pool, &id)
+    let deleted = super::db::delete_agent(&state.pool, &id)
         .await
         .map_err(internal)?;
 
@@ -792,7 +792,7 @@ pub async fn agents_delete(
         ));
     }
 
-    let _ = state.events_tx.send(mc::McEvent::Refresh {
+    let _ = state.events_tx.send(super::McEvent::Refresh {
         at: chrono::Utc::now(),
         reason: format!("agent.delete:{id}"),
     });
@@ -818,11 +818,11 @@ pub async fn agents_reparent(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<ReparentReq>,
-) -> Result<Json<mc::db::AgentRow>, (StatusCode, String)> {
+) -> Result<Json<super::db::AgentRow>, (StatusCode, String)> {
     let policy_cfg = state.cfg.policy_config();
 
     // Agent must exist
-    let agent = mc::db::get_agent(&state.pool, &id)
+    let agent = super::db::get_agent(&state.pool, &id)
         .await
         .map_err(internal)?
         .ok_or_else(|| {
@@ -838,7 +838,7 @@ pub async fn agents_reparent(
 
     // Validate new parent exists (if provided)
     if let Some(ref new_pid) = req.parent_id {
-        let parent = mc::db::get_agent(&state.pool, new_pid)
+        let parent = super::db::get_agent(&state.pool, new_pid)
             .await
             .map_err(internal)?;
         if parent.is_none() {
@@ -853,7 +853,7 @@ pub async fn agents_reparent(
         }
 
         // Check for cycles
-        let would_cycle = mc::db::would_create_cycle(&state.pool, &id, new_pid)
+        let would_cycle = super::db::would_create_cycle(&state.pool, &id, new_pid)
             .await
             .map_err(internal)?;
         if would_cycle {
@@ -905,7 +905,7 @@ pub async fn agents_reparent(
     }))
     .unwrap();
 
-    mc::db::audit_policy(
+    super::db::audit_policy(
         &state.pool,
         &ActorKind::User,
         &user.0,
@@ -928,17 +928,17 @@ pub async fn agents_reparent(
     }
 
     // Perform the reparent
-    mc::db::reparent_agent(&state.pool, &id, req.parent_id.as_deref())
+    super::db::reparent_agent(&state.pool, &id, req.parent_id.as_deref())
         .await
         .map_err(internal)?;
 
-    let _ = state.events_tx.send(mc::McEvent::Refresh {
+    let _ = state.events_tx.send(super::McEvent::Refresh {
         at: chrono::Utc::now(),
         reason: format!("agent.reparent:{id}"),
     });
 
     // Return updated agent
-    let updated = mc::db::get_agent(&state.pool, &id)
+    let updated = super::db::get_agent(&state.pool, &id)
         .await
         .map_err(internal)?
         .ok_or_else(|| internal("agent disappeared after reparent"))?;
@@ -965,7 +965,7 @@ pub struct AuditQueryParams {
 
 #[derive(Debug, Serialize)]
 pub struct AuditListResp {
-    pub events: Vec<mc::db::AuditEventRow>,
+    pub events: Vec<super::db::AuditEventRow>,
     pub total: i64,
     pub limit: i64,
     pub offset: i64,
@@ -979,7 +979,7 @@ pub async fn audit_list(
     let limit = params.limit.unwrap_or(50).min(500).max(1);
     let offset = params.offset.unwrap_or(0).max(0);
 
-    let q = mc::db::AuditQuery {
+    let q = super::db::AuditQuery {
         since: params.since,
         until: params.until,
         actor_kind: params.actor_kind,
@@ -991,7 +991,7 @@ pub async fn audit_list(
         offset,
     };
 
-    let (events, total) = mc::db::query_audit_events(&state.pool, &q)
+    let (events, total) = super::db::query_audit_events(&state.pool, &q)
         .await
         .map_err(internal)?;
 

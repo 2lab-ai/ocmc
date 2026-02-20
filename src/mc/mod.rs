@@ -8,8 +8,12 @@ pub mod policy;
 pub mod poller;
 pub mod ws;
 
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
+use tokio::sync::{broadcast, RwLock};
 
 #[derive(Clone, Debug)]
 pub struct McConfig {
@@ -83,6 +87,14 @@ impl McConfig {
             override_ttl_s: self.override_ttl_s,
         }
     }
+}
+
+#[derive(Clone)]
+pub struct AppState {
+    pub pool: SqlitePool,
+    pub events_tx: broadcast::Sender<McEvent>,
+    pub cache: Arc<RwLock<CacheState>>,
+    pub cfg: McConfig,
 }
 
 #[derive(Clone, Debug, Default)]

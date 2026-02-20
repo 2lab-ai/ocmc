@@ -13,15 +13,10 @@ use tokio::sync::{broadcast, RwLock};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing::{error, info};
 
-mod mc;
+extern crate mission_control;
+use mission_control::mc;
 
-#[derive(Clone)]
-struct AppState {
-    pool: SqlitePool,
-    events_tx: broadcast::Sender<mc::McEvent>,
-    cache: Arc<RwLock<mc::CacheState>>,
-    cfg: mc::McConfig,
-}
+type AppState = mc::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

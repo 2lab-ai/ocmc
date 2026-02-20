@@ -5,7 +5,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::{mc, AppState};
+use super::AppState;
 
 use super::auth;
 
@@ -36,14 +36,14 @@ pub async fn login_post(
     State(state): State<AppState>,
     Form(f): Form<LoginForm>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let ok = mc::db::verify_user(&state.pool, &f.username, &f.password)
+    let ok = super::db::verify_user(&state.pool, &f.username, &f.password)
         .await
         .map_err(internal)?;
     if !ok {
         return Err((StatusCode::UNAUTHORIZED, "bad credentials".into()));
     }
 
-    mc::db::audit(
+    super::db::audit(
         &state.pool,
         &f.username,
         "auth.login",
@@ -68,7 +68,7 @@ pub async fn logout_post(
     State(state): State<AppState>,
     auth::AuthedUser(user): auth::AuthedUser,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    mc::db::audit(&state.pool, &user, "auth.logout", "{}")
+    super::db::audit(&state.pool, &user, "auth.logout", "{}")
         .await
         .map_err(internal)?;
 
