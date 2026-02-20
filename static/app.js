@@ -13,6 +13,11 @@ let initialLoadDone = false;
 let apiInFlight = false;
 let errorBannerTimer = null;
 
+// ---------------------------------------------------------------------------
+// WebSocket connection state [mc-b1j.5]
+// ---------------------------------------------------------------------------
+let wsConnected = false;
+
 // Agent view scope: 'root-only' or 'all'
 let agentViewScope = localStorage.getItem('agentViewScope') || 'root-only';
 
@@ -777,14 +782,38 @@ async function refresh(){
   }
 }
 
+// ---------------------------------------------------------------------------
+// WebSocket status indicator [mc-b1j.5]
+// ---------------------------------------------------------------------------
+
+function updateWsIndicator(connected){
+  wsConnected = connected;
+  const indicator = document.getElementById('wsIndicator');
+  if(!indicator) return;
+  const dot = indicator.querySelector('.ws-dot');
+  const label = indicator.querySelector('.ws-label');
+  if(dot){
+    dot.className = 'ws-dot ' + (connected ? 'ws-connected' : 'ws-disconnected');
+  }
+  if(label){
+    label.textContent = connected ? 'Connected' : 'Reconnecting…';
+  }
+}
+
 function connectWs(){
   try{
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws.onopen = ()=> updateWsIndicator(true);
     ws.onmessage = ()=> refresh();
-    ws.onclose = ()=> setTimeout(connectWs, 2000);
+    ws.onclose = ()=>{
+      updateWsIndicator(false);
+      setTimeout(connectWs, 2000);
+    };
+    ws.onerror = ()=> updateWsIndicator(false);
   }catch(e){
     console.warn('ws connect failed', e);
+    updateWsIndicator(false);
   }
 }
 
