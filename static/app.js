@@ -504,7 +504,11 @@ function render(snapshot){
 
   lanes.forEach(lane=>{
     const laneEl = el('div',{class:'lane', 'data-lane': lane});
-    laneEl.appendChild(el('div',{class:'lane-title', text: lane}));
+    const count = byLane.get(lane).length;
+    laneEl.appendChild(el('div',{class:'lane-title'},[
+      el('span',{text: lane}),
+      el('span',{class:'lane-count', text: `(${count})`})
+    ]));
 
     laneEl.addEventListener('dragover', (ev)=>{ ev.preventDefault(); });
     laneEl.addEventListener('drop', async (ev)=>{
