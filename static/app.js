@@ -564,7 +564,62 @@ function render(snapshot){
 }
 
 // ---------------------------------------------------------------------------
-// Task card with control gating
+// Priority + time helpers [mc-b1j.3]
+// ---------------------------------------------------------------------------
+
+/** Map priority string to display level (0-4). */
+function priorityLevel(p){
+  if(!p) return null;
+  const s = String(p).toLowerCase();
+  if(s==='0'||s==='p0'||s==='critical') return 0;
+  if(s==='1'||s==='p1'||s==='high') return 1;
+  if(s==='2'||s==='p2'||s==='medium') return 2;
+  if(s==='3'||s==='p3'||s==='low') return 3;
+  if(s==='4'||s==='p4'||s==='trivial') return 4;
+  // Try numeric
+  const n = parseInt(s,10);
+  if(!isNaN(n) && n>=0 && n<=4) return n;
+  return null;
+}
+
+function priorityBadge(p){
+  const lvl = priorityLevel(p);
+  if(lvl === null) return null;
+  const labels = ['P0','P1','P2','P3','P4'];
+  const classes = ['prio-p0','prio-p1','prio-p2','prio-p3','prio-p4'];
+  return el('span',{class:`prio-badge ${classes[lvl]}`, text: labels[lvl]});
+}
+
+/** Format ISO timestamp as relative time ('2m ago', '3h ago', etc.) */
+function relativeTime(isoStr){
+  if(!isoStr) return null;
+  const d = new Date(isoStr);
+  if(isNaN(d.getTime())) return null;
+  const diffMs = Date.now() - d.getTime();
+  if(diffMs < 0) return 'just now';
+  const sec = Math.floor(diffMs/1000);
+  if(sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec/60);
+  if(min < 60) return `${min}m ago`;
+  const hr = Math.floor(min/60);
+  if(hr < 24) return `${hr}h ago`;
+  const days = Math.floor(hr/24);
+  if(days < 30) return `${days}d ago`;
+  return d.toLocaleDateString();
+}
+
+/** Render labels as small chip elements. Filters out mc/* lane labels. */
+function renderLabelChips(labels){
+  if(!labels || labels.length === 0) return null;
+  const visible = labels.filter(l => !l.startsWith('mc/'));
+  if(visible.length === 0) return null;
+  const container = el('div',{class:'label-chips'});
+  visible.forEach(l => container.appendChild(el('span',{class:'label-chip', text: l})));
+  return container;
+}
+
+// ---------------------------------------------------------------------------
+// Task card with control gating + priority/labels/timestamps [mc-b1j.3]
 // ---------------------------------------------------------------------------
 
 function taskCard(t, snapshot){
@@ -581,7 +636,6 @@ function taskCard(t, snapshot){
     });
     card.addEventListener('dragend', ()=> card.classList.remove('dragging'));
   } else {
-    // Gated cards are not draggable
     card.setAttribute('draggable', 'false');
   }
 
@@ -600,7 +654,6 @@ function taskCard(t, snapshot){
     if(a===null) return;
 
     const newAssignee = a.trim() ? a.trim() : null;
-    // Check if assigning to a non-root agent requires override
     if(newAssignee && !isActionAllowed(newAssignee)){
       showPolicyDenied(gatingMessage(newAssignee));
       return;
@@ -620,16 +673,34 @@ function taskCard(t, snapshot){
     }
   });
 
-  card.appendChild(el('div',{class:'id', text: t.id}));
+  // --- Card header row: id + priority badge [mc-b1j.3] ---
+  const headerRow = el('div',{class:'card-header'});
+  headerRow.appendChild(el('span',{class:'id', text: t.id}));
+  const pb = priorityBadge(t.priority);
+  if(pb) headerRow.appendChild(pb);
+  card.appendChild(headerRow);
+
+  // --- Title (truncated with CSS) ---
   card.appendChild(el('div',{class:'title', text: t.title}));
 
+  // --- Labels as chips [mc-b1j.3] ---
+  const chips = renderLabelChips(t.labels);
+  if(chips) card.appendChild(chips);
+
+  // --- Bottom row: assignee + timestamp [mc-b1j.3] ---
   const sub = el('div',{class:'sub'});
-  const assigneeText = el('span',{text: `assignee: ${t.assignee||'-'}`});
+  const assigneeText = el('span',{text: `${t.assignee||'-'}`});
   sub.appendChild(assigneeText);
+
+  const rt = relativeTime(t.updated_at);
+  if(rt){
+    sub.appendChild(el('span',{class:'card-time', text: rt, title: t.updated_at}));
+  }
+
   sub.appendChild(assignBtn);
   card.appendChild(sub);
 
-  // Show gating indicator on gated cards
+  // Gating indicator
   if(isGated){
     const gateBar = el('div',{class:'card-gate-bar'});
     gateBar.appendChild(el('span',{class:'gate-icon', text: '🔒'}));
