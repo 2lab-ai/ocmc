@@ -65,27 +65,47 @@
     </div>
   </div>
 
+  <!-- Error banner (toast area) -->
+  <div id="errorBanner" class="error-banner hidden"></div>
+
   <main>
-    <section>
-      <div class="section-header">
-        <h2>Agents</h2>
-        <div class="view-toggle" id="agentViewToggle">
-          <button class="toggle-btn active" data-view="root-only">Root Only</button>
-          <button class="toggle-btn" data-view="all">All Agents</button>
+    <!-- Loading overlay (shown on initial load) -->
+    <div id="loadingOverlay" class="loading-overlay">
+      <div class="loading-spinner"></div>
+      <p class="loading-text">Loading dashboard…</p>
+    </div>
+
+    <!-- Error state (shown when 503 / no snapshot) -->
+    <div id="errorState" class="error-state hidden">
+      <div class="error-state-icon">⚠️</div>
+      <h3>No snapshot available</h3>
+      <p>The server has not generated a dashboard snapshot yet. This usually resolves in a few seconds.</p>
+      <button id="errorRetryBtn" class="btn-primary">Retry</button>
+    </div>
+
+    <!-- Dashboard content (hidden until loaded) -->
+    <div id="dashboardContent" class="dashboard-content hidden">
+      <section>
+        <div class="section-header">
+          <h2>Agents</h2>
+          <div class="view-toggle" id="agentViewToggle">
+            <button class="toggle-btn active" data-view="root-only">Root Only</button>
+            <button class="toggle-btn" data-view="all">All Agents</button>
+          </div>
         </div>
-      </div>
-      <div id="agents" class="agents-tree"></div>
-    </section>
+        <div id="agents" class="agents-tree"></div>
+      </section>
 
-    <section>
-      <h2>Kanban</h2>
-      <div class="kanban" id="kanban"></div>
-    </section>
+      <section>
+        <h2>Kanban</h2>
+        <div class="kanban" id="kanban"></div>
+      </section>
 
-    <section>
-      <h2>Cron (as cards)</h2>
-      <div id="cron" class="cron"></div>
-    </section>
+      <section>
+        <h2>Cron (as cards)</h2>
+        <div id="cron" class="cron"></div>
+      </section>
+    </div>
   </main>
 
   <script src="/app.js"></script>

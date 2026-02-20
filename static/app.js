@@ -1,9 +1,17 @@
 // =========================================================================
 // Mission Control — app.js
 // CEO override (break-glass) + control gating [mc-b1j.23]
+// Error handling & loading states [mc-b1j.15]
 // =========================================================================
 
 const lanes = ["Backlog","Ready","Doing","Blocked","Done","Waiting Room"];
+
+// ---------------------------------------------------------------------------
+// Loading / error / in-flight state [mc-b1j.15]
+// ---------------------------------------------------------------------------
+let initialLoadDone = false;
+let apiInFlight = false;
+let errorBannerTimer = null;
 
 // Agent view scope: 'root-only' or 'all'
 let agentViewScope = localStorage.getItem('agentViewScope') || 'root-only';
@@ -18,14 +26,82 @@ let overrideState = { active: false, session_id: null, reason: null, expires_at:
 let overrideCountdownTimer = null;
 
 // ---------------------------------------------------------------------------
+// Loading / error UI helpers [mc-b1j.15]
+// ---------------------------------------------------------------------------
+
+function showLoading(){
+  const overlay = document.getElementById('loadingOverlay');
+  if(overlay) overlay.classList.remove('hidden');
+  const content = document.getElementById('dashboardContent');
+  if(content) content.classList.add('hidden');
+  const errState = document.getElementById('errorState');
+  if(errState) errState.classList.add('hidden');
+}
+
+function hideLoading(){
+  const overlay = document.getElementById('loadingOverlay');
+  if(overlay) overlay.classList.add('hidden');
+}
+
+function showErrorState(message){
+  hideLoading();
+  const errState = document.getElementById('errorState');
+  if(!errState) return;
+  const p = errState.querySelector('p');
+  if(p && message) p.textContent = message;
+  errState.classList.remove('hidden');
+  const content = document.getElementById('dashboardContent');
+  if(content) content.classList.add('hidden');
+}
+
+function showDashboard(){
+  hideLoading();
+  const errState = document.getElementById('errorState');
+  if(errState) errState.classList.add('hidden');
+  const content = document.getElementById('dashboardContent');
+  if(content) content.classList.remove('hidden');
+  initialLoadDone = true;
+}
+
+/** Show a toast-style error banner at top. Auto-hides after 6s. */
+function showErrorBanner(msg){
+  const banner = document.getElementById('errorBanner');
+  if(!banner) return;
+  banner.innerHTML = '';
+  banner.appendChild(document.createTextNode('⚠️ ' + msg));
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'banner-close';
+  closeBtn.textContent = '✕';
+  closeBtn.addEventListener('click', ()=> banner.classList.add('hidden'));
+  banner.appendChild(closeBtn);
+  banner.classList.remove('hidden');
+  if(errorBannerTimer) clearTimeout(errorBannerTimer);
+  errorBannerTimer = setTimeout(()=> banner.classList.add('hidden'), 6000);
+}
+
+function setApiInFlight(v){
+  apiInFlight = v;
+  document.body.classList.toggle('api-in-flight', v);
+}
+
+// ---------------------------------------------------------------------------
 // API helpers
 // ---------------------------------------------------------------------------
 
 async function apiGet(url){
-  const r = await fetch(url);
-  if(r.status===401){ window.location.href='/login'; return null; }
-  if(!r.ok){ throw new Error(`GET ${url} -> ${r.status}`); }
-  return await r.json();
+  const ctrl = new AbortController();
+  const timer = setTimeout(()=> ctrl.abort(), 10000);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if(r.status===401){ window.location.href='/login'; return null; }
+    if(!r.ok){ throw new Error(`GET ${url} → ${r.status}`); }
+    return await r.json();
+  } catch(e) {
+    clearTimeout(timer);
+    if(e.name === 'AbortError') throw new Error(`GET ${url} → timeout (10s)`);
+    throw e;
+  }
 }
 
 async function apiPost(url, body){
@@ -433,6 +509,7 @@ function render(snapshot){
     laneEl.addEventListener('dragover', (ev)=>{ ev.preventDefault(); });
     laneEl.addEventListener('drop', async (ev)=>{
       ev.preventDefault();
+      if(apiInFlight) return; // [mc-b1j.15] prevent double-moves
       const id = ev.dataTransfer.getData('text/plain');
       if(!id) return;
 
@@ -452,11 +529,15 @@ function render(snapshot){
         body.override_reason = overrideState.reason;
       }
 
+      setApiInFlight(true); // [mc-b1j.15]
       try {
         await apiPost(`/api/task/${encodeURIComponent(id)}/move`, body);
         await refresh();
       } catch(e){
         console.error(e);
+        showErrorBanner(`Move failed: ${e.message}`); // [mc-b1j.15]
+      } finally {
+        setApiInFlight(false); // [mc-b1j.15]
       }
     });
 
@@ -593,13 +674,31 @@ function runBtn(c){
 // ---------------------------------------------------------------------------
 
 async function refresh(){
+  setApiInFlight(true);
   try{
     await refreshOverrideStatus();
     const snap = await apiGet('/api/kanban');
-    if(snap) render(snap);
+    if(snap){
+      showDashboard();
+      render(snap);
+    }
   }catch(e){
     console.error(e);
-    document.getElementById('status').textContent = `error: ${e.message}`;
+    const msg = e.message || String(e);
+    document.getElementById('status').textContent = `error: ${msg}`;
+
+    // On 503 or first load failure, show error state
+    if(!initialLoadDone || msg.includes('503')){
+      const friendly = msg.includes('503')
+        ? 'No snapshot available yet. The server is still initializing — this usually resolves in a few seconds.'
+        : `Failed to load dashboard: ${msg}`;
+      showErrorState(friendly);
+    } else {
+      // Dashboard was already visible — show toast, keep stale data
+      showErrorBanner(`Refresh failed: ${msg}`);
+    }
+  } finally {
+    setApiInFlight(false);
   }
 }
 
@@ -621,5 +720,12 @@ function connectWs(){
 initViewToggle();
 initOverrideModal();
 initPolicyDeniedModal();
+
+// Error retry button [mc-b1j.15]
+const retryBtn = document.getElementById('errorRetryBtn');
+if(retryBtn) retryBtn.addEventListener('click', ()=> refresh());
+
+// Show loading state on initial load [mc-b1j.15]
+showLoading();
 refresh();
 connectWs();

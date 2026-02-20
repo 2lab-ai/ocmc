@@ -114,6 +114,35 @@ textarea.form-input{resize:vertical}
 .gate-override-btn-small{background:#f59e0b;color:#fff;border:none;border-radius:6px;padding:2px 6px;font-size:10px;cursor:pointer;margin-left:auto}
 .gate-override-btn-small:hover{background:#d97706}
 
+/* ---- Loading overlay ---- */
+.loading-overlay{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:80px 20px;gap:16px}
+.loading-overlay.hidden{display:none}
+.loading-spinner{width:36px;height:36px;border:3px solid #e5e5e5;border-top-color:#6366f1;border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:14px;color:#888;margin:0}
+
+/* ---- Error state (503 / no snapshot) ---- */
+.error-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:80px 20px;gap:12px;text-align:center}
+.error-state.hidden{display:none}
+.error-state-icon{font-size:48px}
+.error-state h3{margin:0;font-size:18px;color:#333}
+.error-state p{margin:0;font-size:14px;color:#666;max-width:420px;line-height:1.5}
+.btn-primary{background:#6366f1;color:#fff;border:none;border-radius:10px;padding:8px 20px;cursor:pointer;font-size:14px;font-weight:600}
+.btn-primary:hover{background:#4f46e5}
+
+/* ---- Error banner (toast) ---- */
+.error-banner{position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:500;background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;padding:10px 20px;border-radius:12px;font-size:13px;display:flex;align-items:center;gap:10px;box-shadow:0 4px 16px rgba(0,0,0,0.1);max-width:600px;animation:slideDown 0.25s ease-out}
+.error-banner.hidden{display:none}
+.error-banner .banner-close{background:none;border:none;color:#991b1b;font-size:16px;cursor:pointer;padding:0 2px;margin-left:auto}
+@keyframes slideDown{from{transform:translateX(-50%) translateY(-20px);opacity:0}to{transform:translateX(-50%) translateY(0);opacity:1}}
+
+/* ---- Dashboard content ---- */
+.dashboard-content.hidden{display:none}
+
+/* ---- In-flight state (disable drag) ---- */
+body.api-in-flight .card{pointer-events:none;opacity:0.7}
+body.api-in-flight .card[draggable="true"]{cursor:wait}
+
 /* ---- Cron ---- */
 .cron{display:flex;flex-direction:column;gap:8px}
 .cron-card{border:1px solid #e5e5e5;background:#fff;border-radius:12px;padding:10px}
