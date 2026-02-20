@@ -1,3 +1,4 @@
+pub mod agent_auth;
 pub mod auth;
 pub mod auth_http;
 pub mod bd;

@@ -80,6 +80,15 @@ async fn migrate_agents_columns(pool: &SqlitePool) -> anyhow::Result<()> {
         pool.execute("ALTER TABLE agents ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
             .await?;
     }
+    // mc-6yy.5: per-agent API key hash for agent-to-MC auth
+    if !cols.contains(&"api_key_hash".to_string()) {
+        pool.execute("ALTER TABLE agents ADD COLUMN api_key_hash TEXT NULL")
+            .await?;
+    }
+    if !cols.contains(&"last_heartbeat_at".to_string()) {
+        pool.execute("ALTER TABLE agents ADD COLUMN last_heartbeat_at TEXT NULL")
+            .await?;
+    }
 
     Ok(())
 }
@@ -1065,4 +1074,49 @@ pub async fn get_override_status(pool: &SqlitePool, username: &str) -> anyhow::R
             enabled_at: None,
         },
     })
+}
+
+// ---------------------------------------------------------------------------
+// mc-6yy.5: Agent API key + heartbeat
+// ---------------------------------------------------------------------------
+
+/// Get the stored API key hash for an agent.
+pub async fn get_agent_api_key_hash(
+    pool: &SqlitePool,
+    agent_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT api_key_hash FROM agents WHERE id = ?")
+            .bind(agent_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.and_then(|(h,)| h))
+}
+
+/// Set the API key hash for an agent.
+pub async fn set_agent_api_key_hash(
+    pool: &SqlitePool,
+    agent_id: &str,
+    key_hash: &str,
+) -> anyhow::Result<bool> {
+    let result = sqlx::query("UPDATE agents SET api_key_hash = ? WHERE id = ?")
+        .bind(key_hash)
+        .bind(agent_id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Record a heartbeat timestamp for an agent.
+pub async fn record_heartbeat(
+    pool: &SqlitePool,
+    agent_id: &str,
+) -> anyhow::Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query("UPDATE agents SET last_heartbeat_at = ? WHERE id = ?")
+        .bind(&now)
+        .bind(agent_id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }

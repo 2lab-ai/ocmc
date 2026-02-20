@@ -75,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/agents", get(mc::handlers::agents_list).post(mc::handlers::agents_create))
         .route("/api/agents/:id", delete(mc::handlers::agents_delete))
         .route("/api/agents/:id/reparent", post(mc::handlers::agents_reparent))
+        .route("/api/agents/:id/heartbeat", post(mc::agent_auth::heartbeat_post))
         .route("/api/cron/:id/toggle", post(mc::handlers::cron_toggle_post))
         .route("/api/cron/:id/run", post(mc::handlers::cron_run_post))
         .route("/api/override/status", get(mc::handlers::override_status_get))
