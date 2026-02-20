@@ -96,7 +96,8 @@ textarea.form-input{resize:vertical}
 /* ---- Kanban ---- */
 .kanban{display:flex;gap:12px;overflow:auto;padding-bottom:6px}
 .lane{min-width:280px;border:1px solid #e5e5e5;background:#fff;border-radius:14px;padding:10px}
-.lane-title{font-weight:700;margin-bottom:10px}
+.lane-title{font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.lane-count{font-weight:400;font-size:13px;color:#888}
 .card{border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;background:#fff;transition:all 0.15s}
 .card.dragging{opacity:0.5}
 .card-gated{border-color:#fca5a5;background:repeating-linear-gradient(45deg,#fff,#fff 10px,#fef2f2 10px,#fef2f2 12px);cursor:not-allowed}
