@@ -100,9 +100,29 @@ textarea.form-input{resize:vertical}
 .card{border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;background:#fff;transition:all 0.15s}
 .card.dragging{opacity:0.5}
 .card-gated{border-color:#fca5a5;background:repeating-linear-gradient(45deg,#fff,#fff 10px,#fef2f2 10px,#fef2f2 12px);cursor:not-allowed}
-.card .id{font-size:12px;color:#777}
-.card .title{font-weight:600;margin-top:2px}
 .card .sub{font-size:12px;color:#666;margin-top:6px;display:flex;gap:8px;justify-content:space-between;align-items:center}
+
+/* ---- Card header (id + priority) [mc-b1j.3] ---- */
+.card-header{display:flex;align-items:center;gap:6px}
+.card-header .id{font-size:12px;color:#777}
+
+/* ---- Priority badges [mc-b1j.3] ---- */
+.prio-badge{display:inline-block;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:700;line-height:1.4;letter-spacing:0.3px}
+.prio-p0{background:#fef2f2;color:#dc2626;border:1px solid #fca5a5}
+.prio-p1{background:#fff7ed;color:#ea580c;border:1px solid #fdba74}
+.prio-p2{background:#fefce8;color:#ca8a04;border:1px solid #fde047}
+.prio-p3{background:#eff6ff;color:#2563eb;border:1px solid #93c5fd}
+.prio-p4{background:#f3f4f6;color:#6b7280;border:1px solid #d1d5db}
+
+/* ---- Label chips [mc-b1j.3] ---- */
+.label-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.label-chip{display:inline-block;padding:1px 6px;background:#f3f4f6;color:#4b5563;border:1px solid #e5e7eb;border-radius:6px;font-size:10px;line-height:1.4;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ---- Card relative timestamp [mc-b1j.3] ---- */
+.card-time{font-size:11px;color:#999;white-space:nowrap}
+
+/* ---- Card title truncation [mc-b1j.3] ---- */
+.card .title{font-weight:600;margin-top:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
 
 /* ---- Gated button ---- */
 .btn-gated{opacity:0.5;cursor:not-allowed;border-color:#fca5a5;color:#b91c1c}
