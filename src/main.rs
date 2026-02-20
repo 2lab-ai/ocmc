@@ -86,6 +86,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/override/enable", post(mc::handlers::override_enable_post))
         .route("/api/override/disable", post(mc::handlers::override_disable_post))
         .route("/api/policy/check", post(mc::handlers::policy_check_post))
+        .route("/api/audit", get(mc::handlers::audit_list))
         .route("/ws", get(ws_handler))
         .nest_service("/", ServeDir::new("./static").append_index_html_on_directories(true))
         .layer(TraceLayer::new_for_http())

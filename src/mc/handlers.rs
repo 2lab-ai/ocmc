@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -944,6 +944,63 @@ pub async fn agents_reparent(
         .ok_or_else(|| internal("agent disappeared after reparent"))?;
 
     Ok(Json(updated))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/audit
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct AuditQueryParams {
+    pub since: Option<String>,
+    pub until: Option<String>,
+    pub actor_kind: Option<String>,
+    pub actor_id: Option<String>,
+    pub username: Option<String>,
+    pub action: Option<String>,
+    pub decision: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuditListResp {
+    pub events: Vec<mc::db::AuditEventRow>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+pub async fn audit_list(
+    _user: AuthedUser,
+    State(state): State<AppState>,
+    Query(params): Query<AuditQueryParams>,
+) -> Result<Json<AuditListResp>, (StatusCode, String)> {
+    let limit = params.limit.unwrap_or(50).min(500).max(1);
+    let offset = params.offset.unwrap_or(0).max(0);
+
+    let q = mc::db::AuditQuery {
+        since: params.since,
+        until: params.until,
+        actor_kind: params.actor_kind,
+        actor_id: params.actor_id,
+        username: params.username,
+        action_prefix: params.action,
+        decision: params.decision,
+        limit,
+        offset,
+    };
+
+    let (events, total) = mc::db::query_audit_events(&state.pool, &q)
+        .await
+        .map_err(internal)?;
+
+    Ok(Json(AuditListResp {
+        events,
+        total,
+        limit,
+        offset,
+    }))
 }
 
 // ---------------------------------------------------------------------------

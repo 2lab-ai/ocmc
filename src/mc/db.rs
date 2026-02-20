@@ -352,6 +352,127 @@ pub async fn has_children(pool: &SqlitePool, agent_id: &str) -> anyhow::Result<b
 }
 
 // ---------------------------------------------------------------------------
+// Audit query API
+// ---------------------------------------------------------------------------
+
+/// A single audit event row returned by the query API.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AuditEventRow {
+    pub id: i64,
+    pub at: String,
+    pub actor_kind: String,
+    pub actor_id: String,
+    pub decision: String,
+    pub action: String,
+    pub payload: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub override_reason: Option<String>,
+}
+
+/// Query parameters for audit event listing.
+#[derive(Debug, Default)]
+pub struct AuditQuery {
+    pub since: Option<String>,
+    pub until: Option<String>,
+    pub actor_kind: Option<String>,
+    pub actor_id: Option<String>,
+    pub username: Option<String>, // backward compat: maps to actor_kind=user + actor_id
+    pub action_prefix: Option<String>,
+    pub decision: Option<String>,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+/// Query audit events with filters. Returns (events, total_count).
+///
+/// Uses `sqlx::query` with `SqliteArguments` for fully dynamic binding.
+pub async fn query_audit_events(
+    pool: &SqlitePool,
+    q: &AuditQuery,
+) -> anyhow::Result<(Vec<AuditEventRow>, i64)> {
+    use sqlx::Arguments;
+
+    let mut conditions: Vec<String> = Vec::new();
+    let mut args = sqlx::sqlite::SqliteArguments::default();
+
+    if let Some(ref v) = q.since {
+        conditions.push("at >= ?".into());
+        args.add(v.as_str()).map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
+    if let Some(ref v) = q.until {
+        conditions.push("at <= ?".into());
+        args.add(v.as_str()).map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
+    if let Some(ref v) = q.username {
+        conditions.push("actor_kind = 'user'".into());
+        conditions.push("actor_id = ?".into());
+        args.add(v.as_str()).map_err(|e| anyhow::anyhow!("{e}"))?;
+    } else {
+        if let Some(ref v) = q.actor_kind {
+            conditions.push("actor_kind = ?".into());
+            args.add(v.as_str()).map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+        if let Some(ref v) = q.actor_id {
+            conditions.push("actor_id = ?".into());
+            args.add(v.as_str()).map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+    }
+    if let Some(ref v) = q.action_prefix {
+        conditions.push("action LIKE ?".into());
+        let like = format!("{v}%");
+        args.add(like).map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
+    if let Some(ref v) = q.decision {
+        conditions.push("decision = ?".into());
+        args.add(v.as_str()).map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    // --- count ---
+    let count_sql = format!("SELECT COUNT(*) FROM audit_events {where_clause}");
+    let total: (i64,) = sqlx::query_as_with(&count_sql, args.clone())
+        .fetch_one(pool)
+        .await?;
+
+    // --- data ---
+    let data_sql = format!(
+        "SELECT id, at, actor_kind, actor_id, decision, action, payload_json, override_flag, override_reason \
+         FROM audit_events {where_clause} ORDER BY id DESC LIMIT ? OFFSET ?"
+    );
+    args.add(q.limit).map_err(|e| anyhow::anyhow!("{e}"))?;
+    args.add(q.offset).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let rows: Vec<(i64, String, String, String, String, String, String, i32, Option<String>)> =
+        sqlx::query_as_with(&data_sql, args)
+            .fetch_all(pool)
+            .await?;
+
+    let events = rows
+        .into_iter()
+        .map(|(id, at, actor_kind, actor_id, decision, action, payload_json, override_flag, override_reason)| {
+            let payload = serde_json::from_str(&payload_json).unwrap_or(serde_json::Value::String(payload_json));
+            AuditEventRow {
+                id,
+                at,
+                actor_kind,
+                actor_id,
+                decision,
+                action,
+                payload,
+                override_reason: if override_flag != 0 { override_reason } else { None },
+            }
+        })
+        .collect();
+
+    Ok((events, total.0))
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -524,6 +645,155 @@ CREATE INDEX IF NOT EXISTS idx_agents_parent_id ON agents(parent_id);
         assert!(VALID_ROLES.contains(&"qa"));
         assert!(VALID_ROLES.contains(&"observer"));
         assert!(!VALID_ROLES.contains(&"admin"));
+    }
+
+    // --- Audit query tests ---
+
+    async fn audit_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        pool.execute(
+            r#"
+CREATE TABLE audit_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,
+  actor_kind TEXT NOT NULL DEFAULT 'user',
+  actor_id TEXT NOT NULL DEFAULT '',
+  decision TEXT NOT NULL DEFAULT 'allow',
+  action TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  override_flag INTEGER NOT NULL DEFAULT 0,
+  override_reason TEXT NULL
+);
+CREATE INDEX idx_audit_at ON audit_events(at);
+CREATE INDEX idx_audit_actor ON audit_events(actor_kind, actor_id);
+CREATE INDEX idx_audit_action ON audit_events(action);
+"#,
+        )
+        .await
+        .unwrap();
+        pool
+    }
+
+    async fn insert_audit(pool: &SqlitePool, at: &str, actor_kind: &str, actor_id: &str, decision: &str, action: &str, payload: &str, override_flag: i32, override_reason: Option<&str>) {
+        sqlx::query(
+            "INSERT INTO audit_events (at, actor_kind, actor_id, decision, action, payload_json, override_flag, override_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(at).bind(actor_kind).bind(actor_id).bind(decision).bind(action).bind(payload).bind(override_flag).bind(override_reason)
+        .execute(pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_audit_query_no_filters() {
+        let pool = audit_pool().await;
+        insert_audit(&pool, "2026-01-01T00:00:00Z", "user", "admin", "allow", "auth.login", "{}", 0, None).await;
+        insert_audit(&pool, "2026-01-02T00:00:00Z", "agent", "opus46", "deny", "task.move", "{}", 0, None).await;
+
+        let q = AuditQuery { limit: 50, ..Default::default() };
+        let (events, total) = query_audit_events(&pool, &q).await.unwrap();
+        assert_eq!(total, 2);
+        assert_eq!(events.len(), 2);
+        // Ordered by id DESC
+        assert_eq!(events[0].action, "task.move");
+        assert_eq!(events[1].action, "auth.login");
+    }
+
+    #[tokio::test]
+    async fn test_audit_query_since_until() {
+        let pool = audit_pool().await;
+        insert_audit(&pool, "2026-01-01T00:00:00Z", "user", "admin", "allow", "a", "{}", 0, None).await;
+        insert_audit(&pool, "2026-01-15T00:00:00Z", "user", "admin", "allow", "b", "{}", 0, None).await;
+        insert_audit(&pool, "2026-02-01T00:00:00Z", "user", "admin", "allow", "c", "{}", 0, None).await;
+
+        let q = AuditQuery {
+            since: Some("2026-01-10T00:00:00Z".into()),
+            until: Some("2026-01-20T00:00:00Z".into()),
+            limit: 50,
+            ..Default::default()
+        };
+        let (events, total) = query_audit_events(&pool, &q).await.unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(events[0].action, "b");
+    }
+
+    #[tokio::test]
+    async fn test_audit_query_username_compat() {
+        let pool = audit_pool().await;
+        insert_audit(&pool, "2026-01-01T00:00:00Z", "user", "admin", "allow", "x", "{}", 0, None).await;
+        insert_audit(&pool, "2026-01-01T00:00:00Z", "agent", "opus46", "allow", "y", "{}", 0, None).await;
+
+        let q = AuditQuery { username: Some("admin".into()), limit: 50, ..Default::default() };
+        let (events, total) = query_audit_events(&pool, &q).await.unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(events[0].actor_id, "admin");
+    }
+
+    #[tokio::test]
+    async fn test_audit_query_actor_kind_and_id() {
+        let pool = audit_pool().await;
+        insert_audit(&pool, "2026-01-01T00:00:00Z", "user", "admin", "allow", "x", "{}", 0, None).await;
+        insert_audit(&pool, "2026-01-01T00:00:00Z", "agent", "opus46", "allow", "y", "{}", 0, None).await;
+
+        let q = AuditQuery { actor_kind: Some("agent".into()), actor_id: Some("opus46".into()), limit: 50, ..Default::default() };
+        let (events, total) = query_audit_events(&pool, &q).await.unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(events[0].action, "y");
+    }
+
+    #[tokio::test]
+    async fn test_audit_query_action_prefix() {
+        let pool = audit_pool().await;
+        insert_audit(&pool, "2026-01-01T00:00:00Z", "user", "admin", "allow", "task.move", "{}", 0, None).await;
+        insert_audit(&pool, "2026-01-01T00:00:00Z", "user", "admin", "allow", "task.assign", "{}", 0, None).await;
+        insert_audit(&pool, "2026-01-01T00:00:00Z", "user", "admin", "allow", "auth.login", "{}", 0, None).await;
+
+        let q = AuditQuery { action_prefix: Some("task".into()), limit: 50, ..Default::default() };
+        let (events, total) = query_audit_events(&pool, &q).await.unwrap();
+        assert_eq!(total, 2);
+    }
+
+    #[tokio::test]
+    async fn test_audit_query_decision_filter() {
+        let pool = audit_pool().await;
+        insert_audit(&pool, "2026-01-01T00:00:00Z", "user", "admin", "allow", "a", "{}", 0, None).await;
+        insert_audit(&pool, "2026-01-01T00:00:00Z", "user", "admin", "deny", "b", "{}", 0, None).await;
+
+        let q = AuditQuery { decision: Some("deny".into()), limit: 50, ..Default::default() };
+        let (events, total) = query_audit_events(&pool, &q).await.unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(events[0].action, "b");
+    }
+
+    #[tokio::test]
+    async fn test_audit_query_override_metadata() {
+        let pool = audit_pool().await;
+        insert_audit(&pool, "2026-01-01T00:00:00Z", "user", "admin", "allow", "task.move", "{}", 1, Some("emergency fix")).await;
+        insert_audit(&pool, "2026-01-01T00:00:00Z", "user", "admin", "allow", "auth.login", "{}", 0, None).await;
+
+        let q = AuditQuery { limit: 50, ..Default::default() };
+        let (events, _) = query_audit_events(&pool, &q).await.unwrap();
+        // First event (by id DESC) is auth.login - no override
+        assert!(events[0].override_reason.is_none());
+        // Second is task.move with override
+        assert_eq!(events[1].override_reason.as_deref(), Some("emergency fix"));
+    }
+
+    #[tokio::test]
+    async fn test_audit_query_pagination() {
+        let pool = audit_pool().await;
+        for i in 0..10 {
+            insert_audit(&pool, &format!("2026-01-{:02}T00:00:00Z", i + 1), "user", "admin", "allow", &format!("act{i}"), "{}", 0, None).await;
+        }
+
+        let q = AuditQuery { limit: 3, offset: 0, ..Default::default() };
+        let (events, total) = query_audit_events(&pool, &q).await.unwrap();
+        assert_eq!(total, 10);
+        assert_eq!(events.len(), 3);
+
+        let q2 = AuditQuery { limit: 3, offset: 3, ..Default::default() };
+        let (events2, _) = query_audit_events(&pool, &q2).await.unwrap();
+        assert_eq!(events2.len(), 3);
+        // No overlap
+        assert_ne!(events[0].id, events2[0].id);
     }
 
     // --- Override session tests ---
