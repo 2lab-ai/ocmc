@@ -6,8 +6,12 @@
 ///! - bd::set_lane → task move flow end-to-end
 
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use mission_control::mc::{bd, McConfig, CacheState, KanbanSnapshot};
+
+/// Mutex to serialize tests that mutate process-wide env vars (MOCK_BD_ARGS_LOG).
+static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
 /// Build a McConfig pointing at the mock bd binary.
 fn mock_config() -> McConfig {
@@ -150,6 +154,7 @@ async fn poller_tick_snapshot_generated_at_is_set() {
 
 #[tokio::test]
 async fn set_lane_calls_mock_with_correct_args() {
+    let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let cfg = mock_config();
 
     let tmp = std::env::temp_dir().join(format!(
@@ -172,6 +177,7 @@ async fn set_lane_calls_mock_with_correct_args() {
 
 #[tokio::test]
 async fn move_task_to_each_lane_via_mock() {
+    let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let cfg = mock_config();
     let tmp = std::env::temp_dir().join(format!(
         "mock_bd_lanes_{}.log",
@@ -187,8 +193,9 @@ async fn move_task_to_each_lane_via_mock() {
     }
 
     let log = std::fs::read_to_string(&tmp).unwrap();
-    let lines: Vec<&str> = log.lines().collect();
-    assert_eq!(lines.len(), 6, "expected 6 calls, got: {}", log);
+    // Filter to only `update` calls — parallel tests may inject `list` calls
+    let lines: Vec<&str> = log.lines().filter(|l| l.starts_with("update ")).collect();
+    assert_eq!(lines.len(), 6, "expected 6 update calls, got: {}", log);
 
     assert!(lines[0].contains("--add-label mc/backlog"));
     assert!(lines[1].contains("--add-label mc/ready"));
@@ -206,6 +213,7 @@ async fn move_task_to_each_lane_via_mock() {
 /// End-to-end: poll → pick a task → move it → poll again
 #[tokio::test]
 async fn end_to_end_poll_move_poll() {
+    let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let cfg = mock_config();
 
     // 1. List issues
