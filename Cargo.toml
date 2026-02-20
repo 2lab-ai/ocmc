@@ -3,6 +3,14 @@ name = "mission_control"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "mission_control"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mission_control"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1"
 argon2 = "0.5"

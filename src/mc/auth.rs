@@ -7,7 +7,7 @@ use chrono::{DateTime, Duration, Utc};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
-use crate::AppState;
+use super::AppState;
 
 type HmacSha256 = Hmac<Sha256>;
 
