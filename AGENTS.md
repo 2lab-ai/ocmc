@@ -47,6 +47,9 @@
 - Another agent or the CEO will cross-verify against AC
 - Verification is recorded as a bd comment (PASS/FAIL)
 - FAIL means fix and re-submit; do not close the task
+- Canonical verification ledger issue id: `mission-control-dvg`
+- Every PASS/FAIL + evidence note must be posted to `mission-control-dvg` (task-local comments are still allowed)
+- Do not use `mc-p7w` (unresolvable in this DB) or `mission-control-hp1` (legacy history only) for new verification entries
 
 ## Git Rules (Non-Negotiable)
 
@@ -64,6 +67,10 @@ bd list                    # List all tasks
 bd show <id>               # Show task details
 bd comment <id> "text"     # Add a comment
 bd update <id> status=closed  # Close a task (only after verification)
+
+# Verification ledger (canonical)
+bd show mission-control-dvg
+bd comment mission-control-dvg "PASS/FAIL + evidence"
 ```
 
 ## Folder Rules
