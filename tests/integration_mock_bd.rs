@@ -6,12 +6,44 @@
 ///! - bd::set_lane → task move flow end-to-end
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use mission_control::mc::{bd, McConfig, CacheState, KanbanSnapshot};
 
-/// Mutex to serialize tests that mutate process-wide env vars (MOCK_BD_ARGS_LOG).
+/// Serialize tests that mutate process-wide env vars (MOCK_BD_ARGS_LOG).
 static ENV_MUTEX: Mutex<()> = Mutex::new(());
+static LOG_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+struct MockArgsLog {
+    path: PathBuf,
+}
+
+impl MockArgsLog {
+    fn install(prefix: &str) -> Self {
+        let seq = LOG_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "{}_{}_{}.log",
+            prefix,
+            std::process::id(),
+            seq
+        ));
+        let _ = std::fs::remove_file(&path);
+        unsafe { std::env::set_var("MOCK_BD_ARGS_LOG", &path); }
+        Self { path }
+    }
+
+    fn path(&self) -> &std::path::Path {
+        self.path.as_path()
+    }
+}
+
+impl Drop for MockArgsLog {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+        unsafe { std::env::remove_var("MOCK_BD_ARGS_LOG"); }
+    }
+}
 
 /// Build a McConfig pointing at the mock bd binary.
 fn mock_config() -> McConfig {
@@ -156,35 +188,21 @@ async fn poller_tick_snapshot_generated_at_is_set() {
 async fn set_lane_calls_mock_with_correct_args() {
     let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let cfg = mock_config();
-
-    let tmp = std::env::temp_dir().join(format!(
-        "mock_bd_args_{}.log",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_file(&tmp);
-    unsafe { std::env::set_var("MOCK_BD_ARGS_LOG", &tmp); }
+    let args_log = MockArgsLog::install("mock_bd_args");
 
     bd::set_lane(&cfg, "mc-b1j.6", "Doing").await.expect("set_lane should succeed");
 
-    let log = std::fs::read_to_string(&tmp).expect("args log should exist");
+    let log = std::fs::read_to_string(args_log.path()).expect("args log should exist");
     assert!(log.contains("update mc-b1j.6"), "should call update with issue id, got: {}", log);
     assert!(log.contains("--add-label mc/doing"), "should add mc/doing label, got: {}", log);
     assert!(log.contains("--status in_progress"), "should set status, got: {}", log);
-
-    let _ = std::fs::remove_file(&tmp);
-    unsafe { std::env::remove_var("MOCK_BD_ARGS_LOG"); }
 }
 
 #[tokio::test]
 async fn move_task_to_each_lane_via_mock() {
     let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let cfg = mock_config();
-    let tmp = std::env::temp_dir().join(format!(
-        "mock_bd_lanes_{}.log",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_file(&tmp);
-    unsafe { std::env::set_var("MOCK_BD_ARGS_LOG", &tmp); }
+    let args_log = MockArgsLog::install("mock_bd_lanes");
 
     for lane in &["Backlog", "Ready", "Doing", "Blocked", "Done", "Waiting Room"] {
         bd::set_lane(&cfg, "test-1", lane)
@@ -192,8 +210,7 @@ async fn move_task_to_each_lane_via_mock() {
             .unwrap_or_else(|e| panic!("set_lane to {} failed: {}", lane, e));
     }
 
-    let log = std::fs::read_to_string(&tmp).unwrap();
-    // Filter to only `update` calls — parallel tests may inject `list` calls
+    let log = std::fs::read_to_string(args_log.path()).unwrap();
     let lines: Vec<&str> = log.lines().filter(|l| l.starts_with("update ")).collect();
     assert_eq!(lines.len(), 6, "expected 6 update calls, got: {}", log);
 
@@ -206,8 +223,6 @@ async fn move_task_to_each_lane_via_mock() {
     assert!(!lines[5].contains("--add-label"), "Waiting Room should add no labels");
     assert!(lines[5].contains("--remove-label"));
 
-    let _ = std::fs::remove_file(&tmp);
-    unsafe { std::env::remove_var("MOCK_BD_ARGS_LOG"); }
 }
 
 /// End-to-end: poll → pick a task → move it → poll again
