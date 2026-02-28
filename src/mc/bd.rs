@@ -2,7 +2,7 @@ use std::process::Stdio;
 
 use anyhow::Context;
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use tokio::process::Command;
 
 use super::{McConfig, TaskCard};
@@ -11,7 +11,7 @@ use super::{McConfig, TaskCard};
 struct BdIssue {
     id: String,
     title: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_priority")]
     priority: Option<String>,
     #[serde(default)]
     status: String,
@@ -21,6 +21,25 @@ struct BdIssue {
     assignee: Option<String>,
     #[serde(default)]
     updated_at: Option<DateTime<Utc>>,
+}
+
+fn deserialize_priority<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Priority {
+        String(String),
+        Number(i64),
+    }
+
+    Ok(
+        Option::<Priority>::deserialize(deserializer)?.map(|priority| match priority {
+            Priority::String(value) => value,
+            Priority::Number(value) => value.to_string(),
+        }),
+    )
 }
 
 pub async fn list_issues(cfg: &McConfig) -> anyhow::Result<Vec<TaskCard>> {
@@ -248,6 +267,19 @@ mod tests {
         assert!(issues[3].priority.is_none());
         assert!(issues[3].assignee.is_none());
         assert!(issues[3].updated_at.is_none());
+    }
+
+    #[test]
+    fn parse_priority_string_and_numeric_variants() {
+        let fixture = r#"[
+            {"id":"mc-prio.1","title":"Numeric priority","priority":0},
+            {"id":"mc-prio.2","title":"String priority","priority":"P1"}
+        ]"#;
+
+        let issues: Vec<BdIssue> = serde_json::from_str(fixture).expect("fixture JSON should parse");
+
+        assert_eq!(issues[0].priority.as_deref(), Some("0"));
+        assert_eq!(issues[1].priority.as_deref(), Some("P1"));
     }
 
     // ── lane_from_issue: label-based mapping ──────────────────────────
